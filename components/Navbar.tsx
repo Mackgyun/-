@@ -17,7 +17,7 @@ export const Navbar: React.FC = () => {
     { name: '참가안내', href: '#key-info' },
     { name: '소개', href: '#about' },
     { name: '프로그램', href: '#schedule' },
-    { name: '연사소개', href: '#speakers' },
+    { name: '연자소개', href: '#speakers' },
   ];
 
   return (

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Calendar, MapPin, Users, CreditCard, Clock } from 'lucide-react';
+import { Calendar, MapPin, Users, CreditCard, Clock, ExternalLink } from 'lucide-react';
 
 export const KeyInfo: React.FC = () => {
   return (
@@ -18,17 +18,27 @@ export const KeyInfo: React.FC = () => {
             <div className="space-y-3 text-sm text-slate-600">
               <div>
                 <span className="font-bold text-slate-900 block mb-1">1일차: 12.20(토)</span>
-                <span className="flex items-start gap-1">
-                  <MapPin className="h-3.5 w-3.5 mt-0.5 flex-shrink-0 text-slate-400" />
-                  한국컨퍼런스센터 (강남)
-                </span>
+                <a 
+                  href="https://naver.me/F6lTYr1P" 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  className="flex items-start gap-1 hover:text-blue-600 transition-colors group"
+                >
+                  <MapPin className="h-3.5 w-3.5 mt-0.5 flex-shrink-0 text-slate-400 group-hover:text-blue-500" />
+                  <span className="underline decoration-slate-200 underline-offset-2 group-hover:decoration-blue-500">한국컨퍼런스센터 (강남)</span>
+                </a>
               </div>
               <div>
                 <span className="font-bold text-slate-900 block mb-1">2·3일차: 12.27-28(토·일)</span>
-                <span className="flex items-start gap-1">
-                  <MapPin className="h-3.5 w-3.5 mt-0.5 flex-shrink-0 text-slate-400" />
-                  가평 교원비전센터
-                </span>
+                <a 
+                  href="https://naver.me/5eUcdiUA" 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  className="flex items-start gap-1 hover:text-blue-600 transition-colors group"
+                >
+                  <MapPin className="h-3.5 w-3.5 mt-0.5 flex-shrink-0 text-slate-400 group-hover:text-blue-500" />
+                  <span className="underline decoration-slate-200 underline-offset-2 group-hover:decoration-blue-500">가평 교원비전센터</span>
+                </a>
               </div>
             </div>
           </div>
@@ -83,6 +93,9 @@ export const KeyInfo: React.FC = () => {
               <p className="font-bold text-red-600 text-lg mb-1">12월 7일(일) 자정까지</p>
               <p className="text-xs text-slate-500 mb-4">
                 합격자 발표: 12월 10일(화) 개별 안내
+              </p>
+              <p className="text-xs text-slate-500 mb-4 font-medium">
+                문의 : 02-2646-0852<br/>instagram DM @doc_lounge
               </p>
               <a 
                 href="https://docs.google.com/forms/d/e/1FAIpQLSfxxwS7TZ1mDRLnCgqB4q-hegc7-w1l9IUFK0XVA8DxRm3TCA/viewform"

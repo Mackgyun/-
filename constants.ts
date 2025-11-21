@@ -1,3 +1,4 @@
+
 import { ScheduleDay, Speaker } from './types';
 
 export const SPEAKERS: Speaker[] = [
@@ -60,7 +61,7 @@ export const SPEAKERS: Speaker[] = [
     id: 's8',
     name: '김현철',
     role: '연세의대 & 홍콩과기대 교수',
-    bio: '의사이자 경제학자. 연세대 의대 및 홍콩과학기술대학교 경제학과·정책학과 교수. 연세대학교 의과대학 졸업 후 의사로 활동하다가 연세대학교 경제학부 및 서울대학교 보건대학원에서 석사 학위를, 미국 컬럼비아대학교에서 경제학 박사 학위를 받았다. 이후 코넬대학교 정책학과 교수로 재직했다. 의사 시절 사회의 약자들이 더 많이 아프고 더 많이 죽어가는 현실을 목도하고 건강불평등의 문제가 사회·경제적인 문제임을 깨닫고는 진료실을 나와 현장에서 실험하고 공공정책을 연구하는 경제학자로 변신했다. 대한민국뿐 아니라 말라위, 에티오피아, 가나, 그리고 인도, 필리핀, 부탄, 홍콩 등지를 누비며 다양한 정책을 분석했다. 경제학을 통해 세상에 어떤 유익을 줄수 있는지 기술한 <경제학이 필요한 순간(2023)>를 저술하였다. 그의 연구는 Science, Review of Economics and Statistics, Journal of Public Economics, Journal of Development Economics, Journal of Health Economics 등 선도적인 학술지에 게재되었다.',
+    bio: '의사이자 경제학자. 연세의대 및 홍콩과학기술대학교 경제학과·정책학과 교수. 연세대학교 의과대학 졸업 후 의사로 활동하다가 연세대학교 경제학부 및 서울대학교 보건대학원에서 석사 학위를, 미국 컬럼비아대학교에서 경제학 박사 학위를 받았다. 이후 코넬대학교 정책학과 교수로 재직했다. 의사 시절 사회의 약자들이 더 많이 아프고 더 많이 죽어가는 현실을 목도하고 건강불평등의 문제가 사회·경제적인 문제임을 깨닫고는 진료실을 나와 현장에서 실험하고 공공정책을 연구하는 경제학자로 변신했다. 대한민국뿐 아니라 말라위, 에티오피아, 가나, 그리고 인도, 필리핀, 부탄, 홍콩 등지를 누비며 다양한 정책을 분석했다. 경제학을 통해 세상에 어떤 유익을 줄수 있는지 기술한 <경제학이 필요한 순간(2023)>를 저술하였다. 그의 연구는 Science, Review of Economics and Statistics, Journal of Public Economics, Journal of Development Economics, Journal of Health Economics 등 선도적인 학술지에 게재되었다.',
     topic: 'Talk 7. 국제보건, More than good intentions',
     imageUrl: 'https://aistudiocdn.com/67b72b0e4769b71c34bc625d/67b72f2939526e5c6e95203f.jpeg'
   },
@@ -77,7 +78,7 @@ export const SPEAKERS: Speaker[] = [
     role: '과학전문기자 / 지식 큐레이터',
     bio: '23년차 기자 혹은 지식 큐레이터. 2003년 과학기술, 보건의료, 환경 담당 기자로 시작해서 23년 동안 한우물만 파다보니 어느 새 ‘과학전문기자’ 등으로 불리고 있다. 프레시안, TBS 등에서 과학전문기자로 일했고, 최근에는 TBS 경영전략본부장으로 2년 가까이 일했다. 틈틈이 <망가진 세계에서 우리는>, <과학의 품격>, <수상한 질문, 위험한 생각들>, <세 바퀴로 가는 과학자전거> 등을 펴냈고, 그 책 일부는 중고등학교 교과서에 실렸다. 본업인 기자 외에 지식 큐레이터로 활동하면서 특히 좋은 책을 알리는 데에 관심이 많다. 책 팟캐스트 <YG와 JYP의 책걸상>을 만 9년째 공동 진행하고 있다.',
     topic: 'Talk 9. 왜 사람들은 의사를 욕망하고, 싫어하는가?',
-    imageUrl: 'https://aistudiocdn.com/67b72b0e4769b71c34bc625d/67b72f2939526e5c6e952047.jpeg'
+    imageUrl: 'https://raw.githubusercontent.com/Mackgyun/-/89f756a50273c905e67d1aaa798d2dafe45cdfa8/%EA%B0%95%EC%96%91%EA%B5%AC.jpg'
   },
   {
     id: 's11',
@@ -107,7 +108,7 @@ export const SPEAKERS: Speaker[] = [
     id: 's14',
     name: '정재훈',
     role: '고려의대 교수 / 예방의학자',
-    bio: '대한민국의 예방의학자, 고려대학교에서 의학사, 보건학 석사/박사 학위를 받았다. 현재 고려의대 예방의학교실 보건정책 및 관리학 조교수이다. 전공은 데이터 기반 감염병 정책과 미래 보건의료 정책 두 가지로, 양쪽 분야 모두에서 다양한 학술 활동과 정책적 대외활동하고 있다. 현 정부와 지난 정부에서 몇 가지 직책을 맡은 바 있고, 언론 및 공직사회와 활발한 교류를 하고 있다.',
+    bio: '대한민국의 예방의학자. 고려대학교에서 의학사, 보건학 석사/박사 학위를 받았다. 현재 고려의대 예방의학교실 보건정책 및 관리학 조교수이다. 전공은 데이터 기반 감염병 정책과 미래 보건의료 정책 두 가지로, 양쪽 분야 모두에서 다양한 학술 활동과 정책적 대외활동하고 있다. 현 정부와 지난 정부에서 몇 가지 직책을 맡은 바 있고, 언론 및 공직사회와 활발한 교류를 하고 있다.',
     topic: 'Talk 13. 한국의료의 미래: 변화하는 환경과 새로운 해법',
     imageUrl: 'https://aistudiocdn.com/67b72b0e4769b71c34bc625d/67b72f2939526e5c6e952040.jpeg'
   },
@@ -123,7 +124,7 @@ export const SPEAKERS: Speaker[] = [
     id: 's16',
     name: '이왕준',
     role: '명지의료재단 이사장',
-    bio: '명지의료재단 이사장, 신문 청년의사 발행인, 대한병원협회 부회장, 한국의료질향상학회 회장 등 다양한 분야에서 왕성하게 활동하고 있는 의사이자 병원 경영자. 서울의대를 졸업한 외과 전문의로, 서울대에서 의학박사 학위를 받았다. ‘병원을 고치는 의사’, ‘병원 혁신의 아이콘’ 등으로 불린다. 신종플루, 메르스, 코로나19 등 세 차례의 신종 감염병위기에서 대한병원협회 총괄본부장을 맡는 등 감염병 대응 전문가이기도 하다. 클래식과 국악에도 조예가 깊어서, 전주세계소리축제 조직위원장을 맡기도 했다. 2025년 11월 제네바에서 열린 World Hospital Congress에서 국제병원연맹(IHF)의 차기 회장으로 선출되어, 2027년부터 2년간의 회장직 수행을 포함하여 향후 6년간 국제병원연맹을 리더십에 참여하게 되었다.',
+    bio: '명지의료재단 이사장, 신문 청년의사 발행인, 대한병원협회 부회장, 한국의료질향상학회 회장 등 다양한 분야에서 왕성하게 활동하고 있는 의사이자 병원 경영자. 서울의대를 졸업한 외과 전문의로, 서울대에서 의학박사 학위를 받았다. ‘병원을 고치는 의사’, ‘병원 혁신의 아이콘’ 등으로 불린다. 신종플루, 메르스, 코로나19 등 세 차례의 신종 감염병위기에서 대한병원협회 총괄본부장을 맡는 등 감염병 대응 전문가이기도 하다. 클래식과 국악에도 조예가 깊어서, 전주세계소리축제 조직위원장을 맡기도 했다. 2025년 11월 제네바에서 열린 World Hospital Congress에서 국제병원연맹(IHF)의 차기 회장으로 선출되어, 2027년부터 2년간의 회장직 수행을 포함하여 향후 6년간 국제병원연맹 리더십에 참여하게 되었다.',
     topic: 'Talk 15. 세계가 주목하는 K-의료의 길',
     imageUrl: 'https://aistudiocdn.com/67b72b0e4769b71c34bc625d/67b72f2939526e5c6e952044.jpeg'
   },
@@ -144,16 +145,23 @@ export const SCHEDULE: ScheduleDay[] = [
     items: [
       { time: '09:30', title: '등록' },
       { time: '10:00', title: 'Welcome Remark' },
-      { time: '10:10', title: 'Introduction' },
-      { time: '10:20', title: 'Talk 1. "국제보건"이란 무엇인가?', speaker: '김소윤, 이훈상' },
-      { time: '11:40', title: 'Talk 2. Machine God Complex', speaker: '김헌성' },
+      { time: '10:10', title: 'Introduction', speaker: '사회: 박재영 (청년의사 편집주간)' },
+      { 
+        time: '10:20', 
+        title: 'Talk 1. ‘국제보건’이란 무엇인가?', 
+        subItems: [
+          { title: '- 제목 미정', speaker: '김소윤 (연세의대 교수)' },
+          { title: '- 국제보건 분야에서 의사의 역할과 커리어 개발', speaker: '이훈상 (라이트재단 전략기회이사)' }
+        ]
+      },
+      { time: '11:40', title: 'Talk 2. Machine God Complex, 인공지능 시대, 의사의 새로운 역할', speaker: '김헌성 (가톨릭의대 교수)' },
       { time: '12:30', title: 'Lunch' },
-      { time: '13:30', title: 'Talk 3. 한국 보건의료 ODA의 미래', speaker: '권덕철' },
-      { time: '14:20', title: 'Talk 4. 개도국을 떠도는 이유', speaker: '김훈' },
+      { time: '13:30', title: 'Talk 3. From Aid to Partnership: 한국 보건의료 ODA의 미래', speaker: '권덕철 (전 보건복지부 장관)' },
+      { time: '14:20', title: 'Talk 4. 내가 18년째 개도국을 떠도는 이유', speaker: '김훈 (인제의대 일산백병원 교수, 국제보건활동가)' },
       { time: '15:10', title: 'Coffee Break' },
-      { time: '15:30', title: 'Talk 5. 다른 사람의 성공에 기여한 적 있는가', speaker: '이소영' },
-      { time: '16:20', title: 'Talk 6. 사회적 아웃라이어, 청개구리 커리어', speaker: '황희' },
-      { time: '17:10', title: 'Talk 7. 국제보건, More than good intentions', speaker: '김현철' },
+      { time: '15:30', title: 'Talk 5. 당신은 다른 사람의 성공에 기여한 적 있는가', speaker: '이소영 (마이크로소프트 이사)' },
+      { time: '16:20', title: 'Talk 6. 사회적 아웃라이어 혹은 청개구리 커리어', speaker: '황희 (카카오헬스케어 대표)' },
+      { time: '17:10', title: 'Talk 7. 국제보건, More than good intentions', speaker: '김현철 (연세의대, 홍콩과기대 교수)' },
       { time: '18:00', title: '1일차 일정 종료' },
     ]
   },
@@ -164,14 +172,15 @@ export const SCHEDULE: ScheduleDay[] = [
       { time: '09:30', title: '수서역 집결' },
       { time: '11:00', title: '교원 가평비전센터 도착' },
       { time: '11:30', title: 'Lunch' },
-      { time: '12:30', title: 'Talk 8. 책으로는 알 수 없는 국제보건과 지역보건', speaker: '박건희' },
-      { time: '13:30', title: 'Talk 9. 왜 사람들은 의사를 욕망하고, 싫어하는가?', speaker: '강양구' },
+      { time: '12:30', title: 'Talk 8. 책으로는 알 수 없는 국제보건과 지역보건', speaker: '박건희 (평창군 보건의료원장)' },
+      { time: '13:30', title: 'Talk 9. 왜 사람들은 의사를 욕망하고, 싫어하는가?', speaker: '강양구 (과학전문기자, 지식 큐레이터)' },
       { time: '14:30', title: 'Coffee Break & Networking' },
-      { time: '15:30', title: 'Talk 10. WHO에서 근무하는 의사의 삶', speaker: '고은영' },
-      { time: '16:40', title: 'Talk 11. 정책으로 고치는 사회', speaker: '이주영' },
+      { time: '15:30', title: 'Talk 10. WHO에서 근무하는 의사의 삶', speaker: '고은영 (WHO regional representative, 필리핀)' },
+      { time: '16:40', title: 'Talk 11. 정책으로 고치는 사회, 리더십으로 세우는 의료', speaker: '이주영 (국회의원)' },
       { time: '18:00', title: 'Dinner' },
-      { time: '19:00', title: 'Talk 12. 질병은 복잡하고 할 일은 많다', speaker: '신의철' },
+      { time: '19:00', title: 'Talk 12. 질병은 복잡하고 할 일은 많다', speaker: '신의철 (카이스트 교수)' },
       { time: '20:00', title: 'Networking & Group Talk' },
+      { time: '23:00', title: '2일차 일정 종료' },
     ]
   },
   {
@@ -179,12 +188,13 @@ export const SCHEDULE: ScheduleDay[] = [
     location: '가평 교원비전센터',
     items: [
       { time: '08:00', title: 'Breakfast' },
-      { time: '09:00', title: 'Talk 13. 한국의료의 미래', speaker: '정재훈' },
-      { time: '10:30', title: 'Talk 14. 난민법률구조활동이 남긴 것', speaker: '이일' },
+      { time: '09:00', title: 'Talk 13. 한국의료의 미래: 변화하는 환경과 새로운 해법', speaker: '정재훈 (고려의대 교수)' },
+      { time: '10:30', title: 'Talk 14. 12년 난민법률구조활동이 나에게 남긴 것', speaker: '이일 (공익법센터 어필 대표, 상근 변호사)' },
       { time: '12:00', title: 'Lunch' },
-      { time: '13:00', title: 'Talk 15. 세계가 주목하는 K-의료의 길', speaker: '이왕준' },
+      { time: '13:00', title: 'Talk 15. 세계가 주목하는 K-의료의 길', speaker: '이왕준 (명지병원 이사장, 국제병원연맹 차기 회장)' },
       { time: '14:00', title: 'Survey & Lucky Draw' },
       { time: '15:00', title: '수료식' },
+      { time: '15:30', title: '교원 가평비전센터 출발' },
       { time: '17:00', title: '수서역 도착, 해산' },
     ]
   }

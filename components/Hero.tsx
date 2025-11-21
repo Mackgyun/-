@@ -15,14 +15,15 @@ export const Hero: React.FC = () => {
 
       <div className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
         <div className="inline-block mb-6 px-4 py-1.5 rounded-full bg-blue-500/20 border border-blue-400/30 backdrop-blur-sm">
-          <span className="text-blue-200 font-semibold tracking-wider text-sm uppercase">1st KMI Youth Doctor Camp</span>
+          <span className="text-blue-200 font-semibold tracking-wider text-sm">KMI 한국의학연구소 사회공헌사업</span>
         </div>
         
         <h1 className="text-4xl sm:text-5xl md:text-7xl font-black text-white tracking-tight mb-6 leading-tight">
-          글로벌 헬스 <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-teal-300">리더십 캠프</span>
+          제1회 KMI 청년의사<br />
+          <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-teal-300">글로벌 헬스 리더십 캠프</span>
         </h1>
         
-        <p className="mt-4 text-xl md:text-2xl text-slate-300 max-w-3xl mx-auto font-light leading-relaxed">
+        <p className="mt-6 text-xl md:text-2xl text-slate-200 max-w-3xl mx-auto font-light leading-relaxed break-keep">
           국제보건과 미래의료에 관심 있는 의대생을 위한 특별한 여정.<br className="hidden md:block" />
           최고의 전문가들과 함께 당신의 비전을 넓히세요.
         </p>

@@ -5,7 +5,6 @@ import { KeyInfo } from './components/KeyInfo';
 import { Section } from './components/Section';
 import { Schedule } from './components/Schedule';
 import { Speakers } from './components/Speakers';
-import { CheckCircle2, HeartHandshake, Lightbulb, Users } from 'lucide-react';
 
 const App: React.FC = () => {
   return (
@@ -16,54 +15,69 @@ const App: React.FC = () => {
       
       <KeyInfo />
 
-      <Section id="about" className="bg-white pt-24">
-        <div className="grid md:grid-cols-2 gap-12 items-center">
-          <div>
-            <h2 className="text-3xl md:text-4xl font-bold text-slate-900 mb-6">
-              왜 <span className="text-blue-600">청년의사 리더십 캠프</span>인가요?
+      <Section id="about" className="bg-white pt-24 pb-24">
+        <div className="max-w-4xl mx-auto">
+          {/* Header */}
+          <div className="text-center mb-16">
+            <h2 className="text-3xl md:text-4xl font-bold text-slate-900 mb-4">
+              새로운 시대를 여는 <span className="text-blue-600">의대생들의 만남</span>
             </h2>
-            <p className="text-lg text-slate-600 mb-6 leading-relaxed">
-              2001년부터 10회에 걸쳐 진행된 'MSD청년슈바이처캠프'와 2007년부터 이어진 '메디슨 청년의사 자원봉사 체험캠프'의 정신을 잇습니다.
+            <div className="h-1 w-20 bg-blue-600 mx-auto rounded-full"/>
+          </div>
+
+          {/* Intro Text */}
+          <div className="text-lg text-slate-700 leading-relaxed space-y-6 text-justify break-keep mb-12 px-4">
+            <p>
+              2001년부터 10회에 걸쳐 진행된 ‘MSD청년슈바이처캠프’와 2007년부터 8회에 걸쳐 진행된 ‘메디슨 청년의사 자원봉사 체험캠프’에 이어, 오랜만에 청년의사가 ‘의대생 캠프’를 진행합니다.
             </p>
-            <p className="text-lg text-slate-600 mb-8 leading-relaxed">
-              21세기의 의료는 국경을 넘나드는 협력 없이는 완성될 수 없습니다. 이번 캠프는 
-              <span className="font-bold text-slate-900"> '국제보건'</span>과 
-              <span className="font-bold text-slate-900"> '미래의료'</span>를 주제로,
-              강의실에서는 만날 수 없는 최고의 전문가들과 함께 깊이 있는 통찰을 나눕니다.
+            <p>
+              이번 캠프의 주제는 ‘국제보건’과 ‘미래의료’입니다. 학교에서는 쉽게 만날 수 없는 최고의 전문가들을 만나고, 비슷한 열정을 지닌 동료들과 유대를 쌓는 ‘제1회 KMI 청년의사 글로벌 헬스 리더십 캠프’에 의대생들의 많은 지원 바랍니다. 이 캠프는 연 2회 2박3일간 진행되며, 1회 캠프는 예외적으로 1박3일 일정으로 진행됩니다.
             </p>
-            
-            <div className="grid grid-cols-2 gap-4">
-              {[
-                { icon: Users, text: "동료들과의 유대" },
-                { icon: Lightbulb, text: "미래의료 통찰" },
-                { icon: HeartHandshake, text: "국제보건 멘토링" },
-                { icon: CheckCircle2, text: "진로 모색" }
-              ].map((item, i) => (
-                <div key={i} className="flex items-center gap-3 bg-slate-50 p-3 rounded-lg">
-                  <item.icon className="h-5 w-5 text-blue-600" />
-                  <span className="font-medium text-slate-700">{item.text}</span>
-                </div>
-              ))}
+          </div>
+
+          {/* Image Section */}
+          <div className="mb-12 px-4 md:px-0">
+            <div className="relative aspect-[21/9] w-full overflow-hidden rounded-2xl shadow-lg group">
+              <img 
+                src="https://images.unsplash.com/photo-1576091160550-2187d80018fd?auto=format&fit=crop&q=80&w=2070" 
+                alt="Medical students seminar and discussion" 
+                className="object-cover w-full h-full group-hover:scale-105 transition-transform duration-700"
+              />
+              <div className="absolute inset-0 bg-gradient-to-t from-blue-900/20 to-transparent"/>
             </div>
           </div>
-          <div className="relative">
-            <div className="aspect-video rounded-2xl overflow-hidden shadow-2xl transform md:rotate-2 hover:rotate-0 transition-transform duration-500">
-               <img 
-                src="https://picsum.photos/800/600?grayscale" 
-                alt="Medical Students Discussion" 
-                className="w-full h-full object-cover"
-              />
-              <div className="absolute inset-0 bg-gradient-to-tr from-blue-900/50 to-transparent" />
-              <div className="absolute bottom-6 left-6 text-white">
-                <p className="font-bold text-lg">주최: 신문 청년의사</p>
-                <p className="text-sm opacity-90">후원: 보건복지부 · KMI 한국의학연구소</p>
-              </div>
+
+          {/* Purpose Box (Highlighted) */}
+          <div className="bg-slate-50 rounded-3xl p-8 md:p-12 shadow-sm border border-slate-100 mb-12 mx-2 md:mx-0">
+            <h3 className="text-2xl font-bold text-slate-900 mb-8 flex items-center border-b pb-4 border-slate-200">
+              <span className="bg-blue-600 w-1.5 h-8 mr-3 rounded-full"></span>
+              취지
+            </h3>
+            <div className="text-lg text-slate-700 space-y-6 leading-relaxed text-justify break-keep">
+              <p>
+                21세기의 의료는 국경을 넘나드는 협력과 연대 없이는 완성될 수 없습니다. 감염병, 기후변화, 보건의료 접근성 불평등, 난민 문제 등 보건의료 및 공중보건과 밀접한 관련이 있는 전 지구적인 위기들은 단일 국가의 대응으로는 극복하기 어렵습니다.
+              </p>
+              <p>
+                이러한 상황에서 국제기구, NGO, 정부 주도 ODA 프로젝트 등 다양한 무대에서 의사들의 역할은 점점 더 중요해지고 있습니다. 한국에서도 최근 국제보건에 대한 의대생과 젊은 의사들의 관심이 눈에 띄게 증가하고 있습니다. 하지만 여전히 이 분야에 대한 정보는 부족하고, 실제 활동하고 있는 전문가들과의 접점은 매우 제한적입니다.
+              </p>
+              <p>
+                또한, 인공지능의 등장으로 대표되는 기술 혁신과 고령화로 대표되는 의료환경 변화 속에서, 미래의 의료는 지금과 크게 달라질 것으로 예측되지만 그에 대해 적극적으로 대비하는 움직임은 찾아보기 어렵습니다.
+              </p>
             </div>
+          </div>
+
+          {/* Conclusion */}
+          <div className="text-center px-4">
+            <p className="text-xl md:text-2xl font-semibold text-slate-900 leading-relaxed break-keep">
+              이에 따라, 신문 청년의사와 KMI한국의학연구소는 <br className="hidden md:block"/>
+              국제보건 및 미래의료에 관심 있는 의대생들이 실제 현장의 이야기를 듣고, <br className="hidden md:block"/>
+              진로를 모색하며, 서로의 열정을 공유할 수 있는 장을 마련합니다.
+            </p>
           </div>
         </div>
       </Section>
 
-      <Section id="schedule" title="프로그램 일정" subtitle="1박 3일간 펼쳐지는 지식과 영감의 여정" className="bg-slate-50">
+      <Section id="schedule" title="프로그램 일정" subtitle="1박 3일간 펼쳐지는 지식과 영감의 여정" className="bg-gradient-to-b from-slate-50 via-blue-50/30 to-slate-100">
         <Schedule />
       </Section>
 
@@ -109,7 +123,7 @@ const App: React.FC = () => {
               <p>후원: 보건복지부, KMI 한국의학연구소</p>
             </div>
             <div className="md:text-right">
-              <p className="text-sm">문의: 청년의사 편집국</p>
+              <p className="text-sm font-medium text-slate-400">문의 : 02-2646-0852, instagram DM @doc_lounge</p>
               <p className="text-sm mt-2">Copyright © The Korean Doctors Weekly. All rights reserved.</p>
             </div>
           </div>

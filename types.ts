@@ -12,6 +12,10 @@ export interface ScheduleItem {
   title: string;
   speaker?: string;
   description?: string;
+  subItems?: {
+    title?: string;
+    speaker?: string;
+  }[];
 }
 
 export interface ScheduleDay {
