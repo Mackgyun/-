@@ -21,8 +21,17 @@ description: >
 
 - Node.js 22 이상, ffmpeg 설치 필요 (`npx hyperframes doctor`로 확인, 전 항목 ok)
 - HyperFrames 코어 스킬이 설치돼 있어야 한다: `npx hyperframes skills update`
-- 폰트: GMarket Sans (`GmarketSansBold.ttf`, `GmarketSansMedium.ttf`).
-  공식 배포처 corp.gmarket.com/fonts 에서 받아 클립 폴더의 `assets/`에 둔다.
+- 폰트: GMarket Sans. **저장소 `assets/fonts/`에 이미 들어 있다.**
+  Bold / Medium / Light 3종이며, 클립을 만들 때 필요한 것만 클립 폴더의
+  `assets/`로 복사한다. 히어로는 Bold, 보조 텍스트는 Medium이 기본이다.
+
+  ```bash
+  mkdir -p clip-01/assets
+  cp assets/fonts/GmarketSansTTFBold.ttf clip-01/assets/
+  cp assets/fonts/GmarketSansTTFMedium.ttf clip-01/assets/
+  cp assets/vendor/gsap-3.14.2.min.js clip-01/assets/
+  ```
+- GSAP: 저장소 `assets/vendor/gsap-3.14.2.min.js`의 로컬 사본을 쓴다. CDN을 쓰지 않는다.
 - 버전은 `@latest`로 통일한다. CLI만 옛 버전에 핀하면 설치된 스킬 문서(최신)와 어긋난다.
 
 작성 규칙의 근거가 되는 원본 계약은 `/hyperframes-core`에 있다. 컴포지션 HTML을
@@ -94,12 +103,18 @@ description: >
 클립 하나 = 폴더 하나.
 
 ```
+assets/fonts/            ← 저장소 공용 폰트 원본 (Bold / Medium / Light)
+assets/vendor/           ← 저장소 공용 GSAP 사본
 clip-01/
   index.html
-  assets/
-    GmarketSansBold.ttf
-    GmarketSansMedium.ttf
+  assets/                ← 필요한 것만 여기로 복사
+    GmarketSansTTFBold.ttf
+    GmarketSansTTFMedium.ttf
+    gsap-3.14.2.min.js
 ```
+
+폰트를 클립 폴더 밖에서 상위 경로(`../assets/fonts/`)로 참조하지 않는다.
+렌더 시 경로 해석이 깨지고, 클립 폴더 하나만 옮기면 폰트가 따라가지 않는다.
 
 컴포지션 HTML을 쓸 때 지킬 것:
 
@@ -116,7 +131,12 @@ clip-01/
    프레임은 렌더되지 않는다. 2.9초 클립이면 최종 포즈를 2.8초쯤에 안착시킨다.
 6. `data-track-index`는 Studio 타임라인 표시용일 뿐 렌더가 읽지 않는다.
    쌓임 순서는 DOM 순서와 CSS로 만든다.
-7. GSAP은 버전을 핀한 CDN으로: `https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js`
+7. **GSAP은 CDN이 아니라 로컬 사본을 참조한다** — `assets/gsap-3.14.2.min.js`.
+   CDN이 막힌 환경에서는 `lint`가 통과해도 스크립트가 로드되지 않아 **결과가
+   정지 화면으로 나온다.** 이 실패는 `check`의 Runtime 단계에서만 잡힌다.
+8. 블롭처럼 캔버스 밖으로 의도적으로 흘려보내는 요소는 그 요소를 감싼 클립에
+   `data-layout-allow-overflow`를 붙인다. 없으면 `check`가 `panel_out_of_canvas`
+   경고를 낸다. 진짜 잘림과 의도된 블리드를 구분하기 위한 표시다.
 
 뼈대는 `references/skeleton.html` 참고.
 
@@ -170,6 +190,8 @@ npx hyperframes render --quality high --output clip-01.mp4
 | 글자가 전부 □ | 폰트 파일이 `assets/`에 없거나 `@font-face` 경로 오타. `check`가 잡는다 |
 | 영상이 전부 검정 | 배경을 루트에 직접 칠함 → 5장 4번 |
 | 클립이 안 움직임 | `window.__timelines` 등록 누락 → 5장 2번 |
+| 렌더 결과가 정지 화면 | GSAP 로드 실패. CDN을 참조하고 있지 않은지 확인 → 5장 7번. `check`의 Runtime에 `request_failed` / `gsap is not defined`로 뜬다 |
+| `panel_out_of_canvas` 경고 | 의도된 블리드면 `data-layout-allow-overflow` → 5장 8번. 아니면 실제로 잘리는 중이다 |
 | 마지막 포즈가 안 보임 | 최종 상태를 duration에 정확히 맞춤 → 5장 5번 |
 | 투명 webm 미리보기가 검정 | 플레이어가 알파를 못 그리는 것. 편집 앱 타임라인에서 확인 |
 | 클립들이 다 비슷함 | 컨셉과 워시 번호를 매번 다르게 지정 → 3·4장 |

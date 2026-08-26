@@ -2,17 +2,19 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8" />
-<script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+<!-- GSAP은 CDN이 아니라 로컬 사본을 쓴다. CDN이 막힌 환경에서는
+     lint가 통과해도 렌더 결과가 정지 화면으로 나온다. -->
+<script src="assets/gsap-3.14.2.min.js"></script>
 <style>
   @font-face {
     font-family: "GMarket";
-    src: url("assets/GmarketSansBold.ttf") format("truetype");
+    src: url("assets/GmarketSansTTFBold.ttf") format("truetype");
     font-weight: 700;
     font-display: block;
   }
   @font-face {
     font-family: "GMarket";
-    src: url("assets/GmarketSansMedium.ttf") format("truetype");
+    src: url("assets/GmarketSansTTFMedium.ttf") format("truetype");
     font-weight: 500;
     font-display: block;
   }
@@ -52,12 +54,14 @@
 </head>
 <body>
   <!-- data-duration 2.9 → 렌더 구간은 [0, 2.9). 최종 포즈는 2.8쯤에 안착시킨다 -->
+  <!-- 블롭은 의도적으로 캔버스 밖으로 흘러나간다.
+       data-layout-allow-overflow가 없으면 check가 경고로 잡는다. -->
   <div id="root"
        data-composition-id="clip01"
        data-start="0" data-duration="2.9"
        data-width="1080" data-height="1920">
 
-    <div class="bg clip" id="bg" data-start="0" data-duration="2.9">
+    <div class="bg clip" id="bg" data-start="0" data-duration="2.9" data-layout-allow-overflow>
       <div class="blob" id="blob-a"></div>
       <div class="blob" id="blob-b"></div>
       <div class="blob" id="blob-c"></div>
