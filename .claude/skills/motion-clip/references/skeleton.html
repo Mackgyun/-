@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+<style>
+  @font-face {
+    font-family: "GMarket";
+    src: url("assets/GmarketSansBold.ttf") format("truetype");
+    font-weight: 700;
+    font-display: block;
+  }
+  @font-face {
+    font-family: "GMarket";
+    src: url("assets/GmarketSansMedium.ttf") format("truetype");
+    font-weight: 500;
+    font-display: block;
+  }
+
+  html, body {
+    width: 1080px; height: 1920px;
+    margin: 0; overflow: hidden;
+    background: #f8f9fa;
+  }
+  body { font-family: "GMarket", sans-serif; }
+
+  /* 규칙 4: 배경은 루트가 아니라 absolute 자식에 칠한다 */
+  .bg { position: absolute; inset: 0; background: #f8f9fa; }
+
+  .blob {
+    position: absolute;
+    border-radius: 50%;
+    filter: blur(80px);
+    opacity: 0.75;
+  }
+  /* 워시 0 · Sky */
+  #blob-a { width: 900px;  height: 900px;  left: -180px; top: 160px;  background: #bae6fd; }
+  #blob-b { width: 760px;  height: 760px;  right: -200px; top: 620px; background: #ddd6fe; }
+  #blob-c { width: 1080px; height: 1080px; left: 60px;   bottom: -260px; background: #fbcfe8; }
+
+  .card {
+    position: absolute;
+    left: 90px; right: 90px; top: 620px;
+    padding: 80px 72px;
+    background: rgba(255, 255, 255, 0.7);
+    border-radius: 40px;
+    backdrop-filter: blur(12px);
+  }
+  .hero    { font-size: 150px; font-weight: 700; color: #0f172a; line-height: 1.05; margin: 0; }
+  .support { font-size: 46px;  font-weight: 500; color: #475569; margin: 28px 0 0; }
+</style>
+</head>
+<body>
+  <!-- data-duration 2.9 → 렌더 구간은 [0, 2.9). 최종 포즈는 2.8쯤에 안착시킨다 -->
+  <div id="root"
+       data-composition-id="clip01"
+       data-start="0" data-duration="2.9"
+       data-width="1080" data-height="1920">
+
+    <div class="bg clip" id="bg" data-start="0" data-duration="2.9">
+      <div class="blob" id="blob-a"></div>
+      <div class="blob" id="blob-b"></div>
+      <div class="blob" id="blob-c"></div>
+    </div>
+
+    <div class="card clip" id="card" data-start="0" data-duration="2.9">
+      <!-- 자막에 없는 새 단어만. 대본 문장을 그대로 쓰지 않는다 -->
+      <p class="hero">HUMAN?</p>
+      <p class="support">판정 완료</p>
+    </div>
+  </div>
+
+<script>
+  window.__timelines = window.__timelines || {};
+
+  const tl = gsap.timeline({ paused: true });
+
+  // 등장
+  tl.from("#card", { y: 120, scale: 0.86, opacity: 0, duration: 0.55, ease: "back.out(1.6)" }, 0.05)
+    .from(".hero",  { y: 40, opacity: 0, duration: 0.45, ease: "power2.out" }, 0.35)
+    .from(".support", { y: 24, opacity: 0, duration: 0.4, ease: "power2.out" }, 0.55);
+
+  // 상시: 블롭 부유. 무한 반복 대신 duration 안에서 끝나는 유한 트윈으로.
+  tl.to("#blob-a", { x: 60,  y: -50, duration: 2.7, ease: "sine.inOut" }, 0)
+    .to("#blob-b", { x: -70, y: 40,  duration: 2.7, ease: "sine.inOut" }, 0)
+    .to("#blob-c", { x: 40,  y: -30, duration: 2.7, ease: "sine.inOut" }, 0);
+
+  // 규칙 2: 키는 루트의 data-composition-id와 반드시 같아야 한다
+  window.__timelines["clip01"] = tl;
+</script>
+</body>
+</html>
