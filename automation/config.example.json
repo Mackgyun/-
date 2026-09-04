@@ -1,0 +1,44 @@
+{
+  "root_path": "\\\\192.168.0.45\\10tb\\촬영원본",
+
+  "scan": {
+    "max_depth": 3,
+    "video_extensions": [".mp4", ".mov", ".mxf", ".mts", ".m2ts", ".avi", ".mkv", ".braw", ".r3d", ".insv"],
+    "min_file_size_mb": 50,
+    "ignore_folders": ["보류", "임시", "temp", "_backup", "백업", "휴지통", "$RECYCLE.BIN", "System Volume Information"]
+  },
+
+  "google": {
+    "service_account_file": "service_account.json",
+    "spreadsheet_id": "여기에_구글시트_URL의_ID를_붙여넣으세요",
+    "sheet_name": "시트1",
+    "header_row": 1,
+    "columns": {
+      "program": "A",
+      "title": "B",
+      "owner": "C",
+      "due": "D",
+      "note": "E",
+
+      "status": "F",
+      "clip_count": "G",
+      "size_gb": "H",
+      "shot_date": "I",
+      "folder_path": "J",
+      "checked_at": "K"
+    },
+    "unmatched_sheet": "미매칭폴더"
+  },
+
+  "matching": {
+    "min_score": 0.72,
+    "aliases": {}
+  },
+
+  "mark_missing": true,
+
+  "status_labels": {
+    "found": "원본 있음",
+    "missing": "원본 없음"
+  }
+}
