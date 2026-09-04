@@ -1,13 +1,31 @@
 {
   "root_path": "\\\\192.168.0.45\\10tb\\촬영원본",
-
   "scan": {
     "max_depth": 3,
-    "video_extensions": [".mp4", ".mov", ".mxf", ".mts", ".m2ts", ".avi", ".mkv", ".braw", ".r3d", ".insv"],
+    "video_extensions": [
+      ".mp4",
+      ".mov",
+      ".mxf",
+      ".mts",
+      ".m2ts",
+      ".avi",
+      ".mkv",
+      ".braw",
+      ".r3d",
+      ".insv"
+    ],
     "min_file_size_mb": 50,
-    "ignore_folders": ["보류", "임시", "temp", "_backup", "백업", "휴지통", "$RECYCLE.BIN", "System Volume Information"]
+    "ignore_folders": [
+      "보류",
+      "임시",
+      "temp",
+      "_backup",
+      "백업",
+      "휴지통",
+      "$RECYCLE.BIN",
+      "System Volume Information"
+    ]
   },
-
   "google": {
     "service_account_file": "service_account.json",
     "spreadsheet_id": "여기에_구글시트_URL의_ID를_붙여넣으세요",
@@ -19,7 +37,6 @@
       "owner": "C",
       "due": "D",
       "note": "E",
-
       "status": "F",
       "clip_count": "G",
       "size_gb": "H",
@@ -29,14 +46,13 @@
     },
     "unmatched_sheet": "미매칭폴더"
   },
-
   "matching": {
     "min_score": 0.72,
+    "min_score_with_date": 0.4,
+    "date_must_match": true,
     "aliases": {}
   },
-
   "mark_missing": true,
-
   "status_labels": {
     "found": "원본 있음",
     "missing": "원본 없음"

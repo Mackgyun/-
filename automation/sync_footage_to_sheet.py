@@ -93,6 +93,61 @@ NOISE_PATTERNS = [
 
 SEASON_PATTERN = re.compile(r"시즌\s*(\d+)|season\s*(\d+)|\bs(\d+)\b", re.IGNORECASE)
 
+# 폴더명/제목에 적힌 촬영 날짜. 20250629 / 2025-06-29 / 25.06.29 / 0629 을 모두 인식한다.
+DATE_PATTERNS = [
+    (re.compile(r"(?<!\d)(20\d{2})[.\-_/]?(0[1-9]|1[0-2])[.\-_/]?(0[1-9]|[12]\d|3[01])(?!\d)"), "full"),
+    (re.compile(r"(?<!\d)(\d{2})[.\-_/](0[1-9]|1[0-2])[.\-_/](0[1-9]|[12]\d|3[01])(?!\d)"), "short"),
+    (re.compile(r"(?<!\d)(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])(?!\d)"), "md"),
+]
+
+
+@dataclass(frozen=True)
+class ShootDate:
+    """촬영 날짜. 연도가 없는 '0629' 표기도 다루려고 월일(md)을 따로 들고 있다."""
+    md: str                 # "0629"
+    year: int | None = None
+
+    def matches(self, other: "ShootDate") -> bool:
+        if self.year and other.year and self.year != other.year:
+            return False
+        return self.md == other.md
+
+    def iso(self, fallback_year: int | None = None) -> str:
+        year = self.year or fallback_year
+        if not year:
+            return f"{self.md[:2]}-{self.md[2:]}"
+        return f"{year}-{self.md[:2]}-{self.md[2:]}"
+
+    def __str__(self) -> str:
+        return self.iso()
+
+
+def parse_date(name: str) -> tuple[str, ShootDate | None]:
+    """문자열에서 촬영 날짜를 뽑고, 날짜 표기를 지운 나머지를 돌려준다."""
+    for pat, kind in DATE_PATTERNS:
+        m = pat.search(name)
+        if not m:
+            continue
+        if kind == "full":
+            year, mm, dd = int(m.group(1)), m.group(2), m.group(3)
+        elif kind == "short":
+            year, mm, dd = 2000 + int(m.group(1)), m.group(2), m.group(3)
+        else:
+            year, mm, dd = None, m.group(1), m.group(2)
+        cleaned = (name[: m.start()] + " " + name[m.end():]).strip(" _-.")
+        return cleaned, ShootDate(md=f"{mm}{dd}", year=year)
+    return name, None
+
+
+def parse_title(name: str) -> tuple[str, int | None, ShootDate | None]:
+    """제목/폴더명 하나에서 (순수 제목, 편수, 촬영 날짜)를 한 번에 뽑는다.
+
+    날짜를 먼저 걷어내야 '0629'의 숫자를 편수로 오인하지 않는다.
+    """
+    without_date, date = parse_date(name)
+    base, ep = strip_ep(without_date)
+    return base.strip(" _-."), ep, date
+
 
 def _mask_seasons(name: str) -> str:
     """'시즌6'의 6을 편수로 오인하지 않도록, 길이를 유지한 채 시즌 표기를 가린다."""
@@ -145,11 +200,13 @@ class FootageUnit:
     abs_path: str
     title_raw: str
     ep: int | None
+    date: ShootDate | None = None
     clip_count: int = 0
     total_bytes: int = 0
     latest_mtime: float = 0.0
     key: str = ""          # 경로 전체(프로그램 폴더 포함) 기준 비교키
     alt_key: str = ""      # 가장 안쪽 제목 폴더만으로 만든 비교키
+    match_reason: str = "" # 어떤 근거로 시트 행과 붙었는지 (날짜/이름)
 
     @property
     def latest_date(self) -> str:
@@ -243,16 +300,16 @@ def _make_unit(root: Path, folder: Path, parts: list[str], count: int,
     ('시즌6 해장엽/2편' -> 제목 '시즌6 해장엽', 편수 2)
     """
     ep: int | None = None
+    date: ShootDate | None = None
     title_parts: list[str] = []
     for name in reversed(parts):
-        if ep is None:
-            cleaned, found = strip_ep(name)
-            if found is not None:
-                ep = found
-                if cleaned.strip():
-                    title_parts.insert(0, cleaned.strip())
-                continue
-        title_parts.insert(0, name)
+        base, found_ep, found_date = parse_title(name)
+        if ep is None and found_ep is not None:
+            ep = found_ep
+        if date is None and found_date is not None:
+            date = found_date
+        if base:
+            title_parts.insert(0, base)
 
     title_raw = " ".join(title_parts).strip() or folder.name
     leaf_title = title_parts[-1] if title_parts else folder.name
@@ -264,6 +321,7 @@ def _make_unit(root: Path, folder: Path, parts: list[str], count: int,
         clip_count=count,
         total_bytes=total,
         latest_mtime=latest,
+        date=date,
         key=normalize(title_raw, aliases),
         alt_key=normalize(leaf_title, aliases),
     )
@@ -279,6 +337,7 @@ class SheetRow:
     program: str = ""
     title: str = ""
     ep: int | None = None
+    date: ShootDate | None = None
     key: str = ""
     matched: list[FootageUnit] = field(default_factory=list)
 
@@ -287,27 +346,54 @@ class SheetRow:
 # 매칭
 # --------------------------------------------------------------------------
 def match_units_to_rows(units: list[FootageUnit], rows: list[SheetRow],
-                        min_score: float) -> list[FootageUnit]:
-    """각 원본 폴더를 가장 잘 맞는 시트 행에 붙인다. 매칭 실패한 폴더 목록을 반환."""
+                        cfg: dict[str, Any]) -> list[FootageUnit]:
+    """각 원본 폴더를 가장 잘 맞는 시트 행에 붙인다. 매칭 실패한 폴더 목록을 반환.
+
+    우선순위
+      1) 폴더명과 시트 제목의 날짜가 같으면 -> 이름은 대충만 비슷해도 매칭
+      2) 날짜가 서로 다르면 -> 다른 촬영으로 보고 아예 후보에서 제외
+      3) 한쪽에 날짜가 없으면 -> 기존처럼 이름 유사도로만 판단
+    """
+    m = cfg.get("matching", {})
+    name_only_min = float(m.get("min_score", 0.72))
+    with_date_min = float(m.get("min_score_with_date", 0.40))
+    date_must_match = bool(m.get("date_must_match", True))
+
     unmatched: list[FootageUnit] = []
     for unit in units:
         best: SheetRow | None = None
         best_score = 0.0
+        best_reason = ""
         for row in rows:
             if not row.key:
                 continue
             # 편수가 양쪽 다 있으면 반드시 같아야 한다 (편수 오인이 제일 위험)
             if unit.ep is not None and row.ep is not None and unit.ep != row.ep:
                 continue
-            if (unit.ep is None) != (row.ep is None):
-                penalty = 0.05
+
+            date_hit = None
+            if unit.date and row.date:
+                date_hit = unit.date.matches(row.date)
+                if not date_hit and date_must_match:
+                    continue
+
+            name_score = max(similarity(unit.key, row.key),
+                             similarity(unit.alt_key, row.key))
+
+            if date_hit:
+                required, reason = with_date_min, "날짜+이름"
+                score = min(1.0, name_score + 0.30)   # 날짜가 맞으면 가산점
             else:
-                penalty = 0.0
-            score = max(similarity(unit.key, row.key),
-                        similarity(unit.alt_key, row.key)) - penalty
-            if score > best_score:
-                best_score, best = score, row
-        if best is not None and best_score >= min_score:
+                required, reason = name_only_min, "이름"
+                score = name_score
+                if (unit.ep is None) != (row.ep is None):
+                    score -= 0.05
+
+            if score >= required and score > best_score:
+                best_score, best, best_reason = score, row, reason
+
+        if best is not None:
+            unit.match_reason = f"{best_reason} {best_score:.2f}"
             best.matched.append(unit)
         else:
             unmatched.append(unit)
@@ -366,13 +452,14 @@ def read_rows(service, cfg: dict[str, Any]) -> list[SheetRow]:
             current_program = padded[program_idx].strip()
         if not title:
             continue
-        base, ep = strip_ep(title)
+        base, ep, date = parse_title(title)
         rows.append(SheetRow(
             row_no=i,
             values=padded,
             program=current_program,
             title=title,
             ep=ep,
+            date=date,
             key=normalize(base, aliases),
         ))
     return rows
@@ -396,6 +483,8 @@ def build_updates(rows: list[SheetRow], cfg: dict[str, Any]) -> list[dict[str, A
             clips = sum(u.clip_count for u in row.matched)
             size = sum(u.total_bytes for u in row.matched)
             latest = max((u.latest_mtime for u in row.matched), default=0.0)
+            file_year = dt.datetime.fromtimestamp(latest).year if latest else None
+            folder_dates = sorted({u.date.iso(file_year) for u in row.matched if u.date})
             paths = " | ".join(sorted({u.rel_path for u in row.matched}))
             eps = sorted({u.ep for u in row.matched if u.ep is not None})
             status = labels.get("found", "원본확인")
@@ -405,7 +494,9 @@ def build_updates(rows: list[SheetRow], cfg: dict[str, Any]) -> list[dict[str, A
                 "status": status,
                 "clip_count": str(clips),
                 "size_gb": human_gb(size),
-                "shot_date": dt.datetime.fromtimestamp(latest).strftime("%Y-%m-%d") if latest else "",
+                # 폴더명에 적힌 촬영 날짜가 파일 수정일보다 정확하다
+                "shot_date": (", ".join(folder_dates) if folder_dates else
+                              (dt.datetime.fromtimestamp(latest).strftime("%Y-%m-%d") if latest else "")),
                 "folder_path": paths,
             }
         else:
@@ -465,11 +556,12 @@ def write_unmatched(service, cfg: dict[str, Any], unmatched: list[FootageUnit]) 
     if not tab:
         return
     ensure_sheet(service, g["spreadsheet_id"], tab)
-    header = ["폴더 경로", "추정 제목", "추정 편수", "파일 수", "용량(GB)", "최종 수정일", "확인 시각"]
+    header = ["폴더 경로", "추정 제목", "추정 날짜", "추정 편수", "파일 수",
+              "용량(GB)", "최종 수정일", "확인 시각"]
     now = dt.datetime.now().strftime("%Y-%m-%d %H:%M")
     body = [header] + [
-        [u.rel_path, u.title_raw, str(u.ep or ""), str(u.clip_count),
-         human_gb(u.total_bytes), u.latest_date, now]
+        [u.rel_path, u.title_raw, str(u.date) if u.date else "", str(u.ep or ""),
+         str(u.clip_count), human_gb(u.total_bytes), u.latest_date, now]
         for u in sorted(unmatched, key=lambda x: x.rel_path)
     ]
     service.spreadsheets().values().clear(
@@ -492,7 +584,7 @@ def write_headers(service, cfg: dict[str, Any]) -> None:
         "status": "원본상태",
         "clip_count": "파일수",
         "size_gb": "용량(GB)",
-        "shot_date": "촬영일(파일기준)",
+        "shot_date": "촬영일",
         "folder_path": "원본폴더",
         "checked_at": "확인시각",
     }
@@ -519,7 +611,8 @@ def print_scan(units: list[FootageUnit]) -> None:
     width = max(len(u.rel_path) for u in units)
     for u in sorted(units, key=lambda x: x.rel_path):
         ep = f"{u.ep}편" if u.ep is not None else "편수?"
-        print(f"  {u.rel_path.ljust(width)}  | {ep:>5} | {u.clip_count:>3}개 | "
+        date = str(u.date) if u.date else "날짜?"
+        print(f"  {u.rel_path.ljust(width)}  | {date:>10} | {ep:>5} | {u.clip_count:>3}개 | "
               f"{human_gb(u.total_bytes):>7}GB | {u.latest_date}")
 
 
@@ -539,8 +632,7 @@ def run_once(cfg: dict[str, Any], scan_only: bool, dry_run: bool, init_headers: 
     rows = read_rows(service, cfg)
     log(f"시트에서 콘텐츠 행 {len(rows)}개를 읽었습니다.")
 
-    min_score = float(cfg.get("matching", {}).get("min_score", 0.72))
-    unmatched = match_units_to_rows(units, rows, min_score)
+    unmatched = match_units_to_rows(units, rows, cfg)
     matched_rows = [r for r in rows if r.matched]
     log(f"매칭 성공: 시트 {len(matched_rows)}행 / 폴더 {len(units) - len(unmatched)}개, "
         f"매칭 실패 폴더 {len(unmatched)}개")
@@ -548,10 +640,13 @@ def run_once(cfg: dict[str, Any], scan_only: bool, dry_run: bool, init_headers: 
     updates = build_updates(rows, cfg)
     if dry_run:
         for r in matched_rows:
-            eps = ", ".join(f"{u.ep}편" if u.ep is not None else "?" for u in r.matched)
-            print(f"  [{r.row_no:>4}] {r.title}  <-  {eps}  ({sum(u.clip_count for u in r.matched)}개 파일)")
+            print(f"  [{r.row_no:>4}] {r.title}")
+            for u in r.matched:
+                ep = f"{u.ep}편" if u.ep is not None else "편수?"
+                print(f"         <- {u.rel_path}  ({ep}, {u.clip_count}개, 근거: {u.match_reason})")
         for u in unmatched:
-            print(f"  [미매칭] {u.rel_path}")
+            date = str(u.date) if u.date else "날짜?"
+            print(f"  [미매칭] {u.rel_path}  (제목: {u.title_raw} / {date})")
         log(f"(dry-run) 변경 예정 셀 {len(updates)}개 — 실제로는 쓰지 않았습니다.")
         return
 
