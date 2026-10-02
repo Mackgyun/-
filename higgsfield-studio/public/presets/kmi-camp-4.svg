@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 800" width="600" height="800">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2a0f3d"/><stop offset="1" stop-color="#c2410c"/></linearGradient>
+    <radialGradient id="r" cx="0.7" cy="0.2" r="0.7"><stop offset="0" stop-color="#fbbf24" stop-opacity="0.45"/><stop offset="1" stop-color="#fbbf24" stop-opacity="0"/></radialGradient>
+  </defs>
+  <rect width="600" height="800" fill="url(#g)"/>
+  <rect width="600" height="800" fill="url(#r)"/>
+  <path d="M0 520 Q150 380 300 500 T600 440 V800 H0Z" fill="#fff" fill-opacity="0.12"/><circle cx="440" cy="190" r="70" fill="#fbbf24" fill-opacity="0.7"/>
+  <text x="40" y="700" fill="#fff" font-family="Inter,Arial,sans-serif" font-size="40" font-weight="700">Camp atmosphere</text>
+  <text x="40" y="742" fill="#fff" fill-opacity="0.7" font-family="Inter,Arial,sans-serif" font-size="22">Warm, candid, golden hour</text>
+</svg>
