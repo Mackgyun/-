@@ -1,27 +1,28 @@
 # Codex 교차검증 요청 (2026-11-05 갱신)
 
-너는 독립 검토자다. 아래는 한국 의료전문지(청년의사, 직원 30~40명, 기자 약 20명) 기자가 만드는 **자체 웹앱 '청년의사 브리핑'**의 설계와 1단계 코드다. 다른 AI(Claude)가 작성했고, 다른 Claude 에이전트가 이미 한 번 검토했다(그 결과는 반영됨). 칭찬하지 말고 **틀린 것, 위험한 것, 빠진 것**을 찾아라.
+너는 독립 검토자다. 아래는 한국 의료전문지(청년의사, 직원 30~40명, 기자 약 20명) 기자가 만드는 **자체 웹앱 '청년의사 브리핑'**의 설계와 코드 전체다(시범사업 기능 전체: DART, 알리오, 웹 푸시, 질문 답변, 기사 초안, 스타일북, 메일, 성과 지표). 다른 AI(Claude)가 작성했고, 다른 Claude 에이전트가 이미 한 번 검토했다(그 결과는 반영됨). 칭찬하지 말고 **틀린 것, 위험한 것, 빠진 것**을 찾아라.
 
 시스템 개요:
 - Windows 여분 노트북에서 24시간 실행하는 FastAPI 서버 + SQLite
 - OpenDART 공시를 5분마다 수집, 보건의료 기업만 골라 중요도 분류
 - 자체 웹앱(PWA): PC는 웹 푸시로 Windows 알림(오른쪽 아래), 휴대폰은 홈 화면 앱 푸시
 - 초대 링크 기반 다중 사용자, [내가 쓸게요](담당 표시)
-- 다음 단계: 알리오, 보도자료 메일, LLM(Claude/OpenAI) 질문·기사 초안
+- 알리오 수시공시·결산 비교, 보도자료 메일(기본 꺼짐), LLM(Claude/OpenAI) 질문 답변·기사 초안·스타일북, 성과 지표
 
 검토할 것:
-1. 보안: 인증·세션·초대 코드, 로그인 잠금, CSP·쿠키, XSS, CSRF(SameSite=Lax 쿠키 + JSON API로 충분한지), 인터넷 공개(터널) 시 위험, 비밀값 저장
-2. 정확성: DART 수집 로직(15분 지연·순서 뒤섞임 대응, 부트스트랩, 자정 경계, 한도), 분류 규칙 오탐·누락, 동시성(SQLite + 스레드 + asyncio)
-3. 웹 푸시: VAPID, 서비스 워커, Windows 알림 표시, iOS 제약
-4. Windows 운영: 작업 스케줄러 스크립트, 전원 설정, PowerShell 인코딩
-5. UX/접근성: 화면 구성, 키보드, 다크 모드, 모바일
-6. 우선순위 Top 10 수정 제안 (구체적으로, 파일과 줄 수준)
+1. 보안: 인증·세션·초대, CSP·쿠키, XSS, CSRF, 메일 비밀번호 암호화·권한 분리, LLM 도구가 다른 사용자 데이터에 접근할 여지, 프롬프트 인젝션(공시·메일 본문에 지시문이 섞인 경우), 인터넷 공개 시 위험
+2. 정확성: DART 수집(지연·순서·자정·한도), 알리오 조회 방식(엔드포인트·파라미터·결산표 해석), 자사 기사 파서, FTS 검색, 분류 규칙
+3. LLM: Claude·OpenAI 호출 형식, 도구 루프, 비용 계산, 한도, 거절 처리, 숫자 대조의 한계
+4. 동시성: SQLite + 스레드 + asyncio, 백그라운드 작업들
+5. 웹 푸시·Windows 운영·UX/접근성
+6. 법·운영: 개인정보 국외 이전, 저작권, 알리오·자사 사이트 수집의 적절성
+7. 우선순위 Top 10 수정 제안 (파일·줄 수준)
 
 답변은 한국어로, 항목마다 심각도(상/중/하)와 근거를 붙여라. 확실하지 않은 것은 "확인 필요"로 표시하라.
 
 ---
 
-# [첨부] 1단계 설계
+# [첨부] 설계
 
 # 1단계 설계: DART 수집 + 자체 웹앱 (2026-11-05 갱신)
 
@@ -56,6 +57,21 @@
 - 로그인 실패 잠금은 메모리 기준이라 재시작하면 초기화.
 - Windows 스크립트는 실제 Windows에서 아직 실행해 보지 않음.
 - 질문·초안·메일·알리오는 다음 단계.
+
+---
+
+# 2차: 시범사업 제안서 기능 전체 (2026-11-05)
+
+| 모듈 | 내용 | 안전장치 |
+| --- | --- | --- |
+| `alio.py` | 기관 이름 → apbaId(주 1회), 항목 이름 → reportFormRootNo(formList, 주 1회), 기관×항목별 itemReportListSusi 1페이지 확인(6시간마다), 결산은 itemReportRight 표를 읽어 전년 대비 | 요청 간 1초, 첫 실행은 저장만, 실패는 기관별로 기록하고 계속 |
+| `articles.py` | docdocdoc 기자 목록 페이지 → 기사 본문(JSON-LD → og → 본문 영역), 본문의 기자 이메일로 본인 기사만 저장, SQLite FTS5(trigram) 검색 | 요청 간 2초, 이미 모은 구간이면 중단 |
+| `llm.py` | Claude(beta messages, effort, 시스템 프롬프트 캐시, Sonnet/Opus는 `fallbacks: "default"`)·OpenAI(chat completions) 공통 인터페이스, 도구 호출 루프(최대 6회), 사용량·원화 비용 기록, 기자별 월 한도 | 강제 tool_choice·temperature 미사용, 거절 시 안내 문구 |
+| `qa.py` | 질문 도구: 공시 검색, 공시 원문, DART 재무(fnlttSinglAcnt), 알리오 결산, 과거 기사, (켜면) 내 메일. 정기 브리핑(AI 없으면 목록형) | 모두 읽기 전용, 메일은 본인 것만 |
+| `writing.py` | 스타일북(내 기사 최대 30편 분석), 초안(스타일북 + 내 비슷한 기사 3편 + 원자료), 숫자 대조 | 원자료에 없는 숫자 표시, [확인 필요]/[취재 필요] 표기 지시 |
+| `mail.py` | IMAP EXAMINE(읽기 전용) + BODY.PEEK, UID 증분, 엠바고 문구 추출, Fernet 암호화 | 기본 꺼짐, AI 전송은 별도 스위치 |
+
+남은 한계: 실제 DART·알리오·AI·메일 연결은 키·접속 제한으로 클라우드에서 확인하지 못함(가짜 응답 테스트만). 알리오 결산표의 실제 형식은 첫 수집 때 확인 필요. 자사 기사 페이지 구조도 첫 수집 때 확인 필요.
 
 ---
 
@@ -121,6 +137,70 @@ gray = [
 
 ---
 
+# [첨부] config/alio.toml
+
+```toml
+# 알리오(공공기관 경영정보 공개시스템) 감시 설정
+#
+# 알리오는 경영공시용 공식 API가 없어 사이트의 조회 방식을 그대로 씁니다.
+# 사이트가 바뀌면 수집이 실패할 수 있고, 그때는 관리자 화면에 오류가 표시됩니다.
+# 요청 사이에 1초씩 쉬어 서버에 부담을 주지 않습니다.
+
+# 감시할 기관 (알리오 표기와 같아야 합니다. 못 찾은 이름은 관리자 화면에 표시됩니다)
+organizations = [
+  # 국립대학병원
+  "서울대학교병원", "강원대학교병원", "경북대학교병원", "경상국립대학교병원", "부산대학교병원",
+  "전남대학교병원", "전북대학교병원", "제주대학교병원", "충남대학교병원", "충북대학교병원",
+  "서울대학교치과병원", "부산대학교치과병원", "경북대학교치과병원", "강릉원주대학교치과병원",
+  # 국립·공공 의료기관
+  "국립암센터", "국립중앙의료원", "한국원자력의학원", "한국보훈복지의료공단",
+  # 보건의료 주요 기관
+  "국민건강보험공단", "건강보험심사평가원", "한국보건산업진흥원", "한국보건의료연구원",
+  "한국의료분쟁조정중재원", "한국보건의료인국가시험원", "대한적십자사",
+]
+
+# 감시할 공시 항목 (알리오 항목 이름에 이 단어가 들어가면 감시)
+# level: red = 중요, yellow = 일반
+[[items]]
+match = "손익계산서"
+level = "red"
+finance = true   # 결산 표를 읽어 전년 대비 비교
+
+[[items]]
+match = "임원 현황"
+level = "red"
+
+[[items]]
+match = "이사회 회의록"
+level = "yellow"
+
+[[items]]
+match = "감사원 지적사항"
+level = "red"
+
+[[items]]
+match = "주무부처 지적사항"
+level = "red"
+
+[[items]]
+match = "징계처분"
+level = "yellow"
+
+[[items]]
+match = "경영실적 평가"
+level = "yellow"
+
+[[items]]
+match = "내부감사"
+level = "yellow"
+
+# 결산 비교에서 찾을 줄 이름 (앞의 것부터)
+[finance]
+rows = ["매출액", "영업수익", "의료수익", "영업이익", "의료이익", "법인세비용차감전순이익", "당기순이익"]
+```
+
+---
+
 # [첨부] newsbot/config.py
 
 ```py
@@ -129,7 +209,7 @@ gray = [
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -144,6 +224,17 @@ def _path(value: str) -> Path:
     return p if p.is_absolute() else BASE_DIR / p
 
 
+def _bool(name: str, default: bool) -> bool:
+    v = os.getenv(name)
+    if v is None or v.strip() == "":
+        return default
+    return v.strip().lower() in ("1", "true", "yes", "on")
+
+
+def _times(raw: str) -> tuple[str, ...]:
+    return tuple(t.strip() for t in raw.split(",") if t.strip())
+
+
 @dataclass(frozen=True)
 class Settings:
     dart_api_key: str = ""
@@ -154,10 +245,32 @@ class Settings:
     vapid_contact: str = "mailto:admin@example.com"
     db_path: Path = BASE_DIR / "data/newsbot.db"
     rules_path: Path = BASE_DIR / "config/rules.toml"
+    alio_path: Path = BASE_DIR / "config/alio.toml"
     data_dir: Path = BASE_DIR / "data"
     poll_interval_sec: int = 300
     dart_rescan_pages: int = 3
     dart_daily_call_limit: int = 18000
+
+    # AI
+    llm_provider: str = ""  # claude | openai | "" (꺼짐)
+    anthropic_api_key: str = ""
+    openai_api_key: str = ""
+    claude_models: dict = field(default_factory=lambda: {
+        "fast": "claude-haiku-5-5", "main": "claude-sonnet-5-5", "draft": "claude-opus-5-5"})
+    openai_models: dict = field(default_factory=lambda: {
+        "fast": "gpt-6-luna", "main": "gpt-6.1-sol", "draft": "gpt-6.1-sol"})
+    usd_krw: float = 1400.0
+    default_monthly_limit_krw: int = 30000
+
+    # 알리오·메일·자사 기사·브리핑
+    alio_enabled: bool = True
+    alio_poll_hours: int = 6
+    alio_verify_ssl: bool = True
+    mail_enabled: bool = False  # 법무·IT 검토 후 켬
+    mail_ai_summary: bool = False  # 메일 본문을 해외 AI API로 보내 요약 (국외 이전 검토 필요)
+    mail_poll_minutes: int = 5
+    docdoc_base: str = "https://www.docdocdoc.co.kr"
+    digest_times: tuple = ("08:00", "13:00", "18:00", "23:00")
 
     @property
     def notify_enabled(self) -> bool:
@@ -167,13 +280,22 @@ class Settings:
     def secure_cookies(self) -> bool:
         return self.public_url.startswith("https://")
 
+    @property
+    def llm_ready(self) -> bool:
+        return (self.llm_provider == "claude" and bool(self.anthropic_api_key)) or (
+            self.llm_provider == "openai" and bool(self.openai_api_key))
+
 
 def load_settings(env_file: Path | None = None) -> Settings:
     load_dotenv(env_file or BASE_DIR / ".env")
     mode = os.getenv("ALERT_MODE", "log").strip().lower()
     if mode not in ("log", "notify"):
         raise SystemExit("ALERT_MODE 는 log 또는 notify 여야 합니다.")
+    provider = os.getenv("LLM_PROVIDER", "").strip().lower()
+    if provider not in ("", "claude", "openai"):
+        raise SystemExit("LLM_PROVIDER 는 claude 또는 openai 여야 합니다.")
     db_path = _path(os.getenv("DB_PATH", "data/newsbot.db"))
+    d = Settings()
     return Settings(
         dart_api_key=os.getenv("DART_API_KEY", "").strip(),
         alert_mode=mode,
@@ -183,11 +305,303 @@ def load_settings(env_file: Path | None = None) -> Settings:
         vapid_contact=os.getenv("VAPID_CONTACT", "mailto:admin@example.com"),
         db_path=db_path,
         rules_path=_path(os.getenv("RULES_PATH", "config/rules.toml")),
+        alio_path=_path(os.getenv("ALIO_PATH", "config/alio.toml")),
         data_dir=db_path.parent,
         poll_interval_sec=max(60, int(os.getenv("POLL_INTERVAL_SEC", "300"))),
         dart_rescan_pages=max(1, int(os.getenv("DART_RESCAN_PAGES", "3"))),
         dart_daily_call_limit=int(os.getenv("DART_DAILY_CALL_LIMIT", "18000")),
+        llm_provider=provider,
+        anthropic_api_key=os.getenv("ANTHROPIC_API_KEY", "").strip(),
+        openai_api_key=os.getenv("OPENAI_API_KEY", "").strip(),
+        claude_models={k: os.getenv(f"CLAUDE_MODEL_{k.upper()}", v) for k, v in d.claude_models.items()},
+        openai_models={k: os.getenv(f"OPENAI_MODEL_{k.upper()}", v) for k, v in d.openai_models.items()},
+        usd_krw=float(os.getenv("USD_KRW", "1400")),
+        default_monthly_limit_krw=int(os.getenv("MONTHLY_LIMIT_KRW", "30000")),
+        alio_enabled=_bool("ALIO_ENABLED", True),
+        alio_poll_hours=max(1, int(os.getenv("ALIO_POLL_HOURS", "6"))),
+        alio_verify_ssl=_bool("ALIO_VERIFY_SSL", True),
+        mail_enabled=_bool("MAIL_ENABLED", False),
+        mail_ai_summary=_bool("MAIL_AI_SUMMARY", False),
+        mail_poll_minutes=max(1, int(os.getenv("MAIL_POLL_MINUTES", "5"))),
+        docdoc_base=os.getenv("DOCDOC_BASE", "https://www.docdocdoc.co.kr").rstrip("/"),
+        digest_times=_times(os.getenv("DIGEST_TIMES", "08:00,13:00,18:00,23:00")),
     )
+```
+
+---
+
+# [첨부] newsbot/db.py
+
+```py
+"""SQLite 저장소. 한 프로세스 안에서 여러 스레드가 공유한다."""
+
+from __future__ import annotations
+
+import sqlite3
+import threading
+from contextlib import contextmanager
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Iterator
+
+from .config import KST
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS users (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  username TEXT UNIQUE NOT NULL,
+  display_name TEXT NOT NULL,
+  pw_hash TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'reporter',
+  active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS sessions (
+  token TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  expires_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS invites (
+  code TEXT PRIMARY KEY,
+  role TEXT NOT NULL DEFAULT 'reporter',
+  created_by INTEGER,
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  used_by INTEGER,
+  used_at TEXT
+);
+CREATE TABLE IF NOT EXISTS subscriptions (
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  kind TEXT NOT NULL,           -- company | keyword | all
+  value TEXT NOT NULL,
+  PRIMARY KEY (user_id, kind, value)
+);
+CREATE TABLE IF NOT EXISTS companies (
+  corp_code TEXT PRIMARY KEY,
+  corp_name TEXT NOT NULL,
+  induty_code TEXT,
+  fetched_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS disclosures (
+  rcept_no TEXT PRIMARY KEY,
+  corp_code TEXT NOT NULL,
+  corp_name TEXT NOT NULL,
+  stock_code TEXT,
+  report_nm TEXT NOT NULL,
+  rcept_dt TEXT NOT NULL,
+  flr_nm TEXT,
+  rm TEXT,
+  level TEXT NOT NULL,
+  keyword TEXT,
+  is_correction INTEGER NOT NULL DEFAULT 0,
+  watched INTEGER NOT NULL DEFAULT 0,
+  first_seen_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_disc_seen ON disclosures(first_seen_at DESC);
+CREATE TABLE IF NOT EXISTS claims (
+  rcept_no TEXT PRIMARY KEY REFERENCES disclosures(rcept_no),
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  claimed_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS push_subs (
+  endpoint TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  p256dh TEXT NOT NULL,
+  auth TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  at TEXT NOT NULL,
+  kind TEXT NOT NULL,           -- poll | error | alert | login ...
+  detail TEXT
+);
+CREATE TABLE IF NOT EXISTS kv (
+  key TEXT PRIMARY KEY,
+  value TEXT
+);
+-- 알리오
+CREATE TABLE IF NOT EXISTS alio_orgs (
+  apba_id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  inst_type TEXT,
+  dept TEXT,
+  resolved_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS alio_finance (
+  disclosure_no TEXT PRIMARY KEY,
+  apba_id TEXT NOT NULL,
+  org_name TEXT NOT NULL,
+  item_name TEXT NOT NULL,
+  title TEXT,
+  idate TEXT,
+  table_json TEXT NOT NULL,
+  fetched_at TEXT NOT NULL
+);
+-- 보도자료 메일 (기자 본인만)
+CREATE TABLE IF NOT EXISTS mail_accounts (
+  user_id INTEGER PRIMARY KEY REFERENCES users(id),
+  host TEXT NOT NULL,
+  username TEXT NOT NULL,
+  secret_enc TEXT NOT NULL,
+  folder TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  last_uid INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS mails (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  uid INTEGER NOT NULL,
+  sender TEXT,
+  subject TEXT,
+  sent_at TEXT,
+  embargo TEXT,
+  body TEXT,
+  summary TEXT,
+  first_seen_at TEXT NOT NULL,
+  UNIQUE(user_id, uid)
+);
+-- 자사 기사 (스타일북·유사 기사 검색용)
+CREATE TABLE IF NOT EXISTS articles (
+  idxno INTEGER PRIMARY KEY,
+  title TEXT NOT NULL,
+  author TEXT,
+  author_id TEXT,
+  section TEXT,
+  published_at TEXT,
+  body TEXT NOT NULL,
+  url TEXT NOT NULL,
+  fetched_at TEXT NOT NULL
+);
+CREATE VIRTUAL TABLE IF NOT EXISTS articles_fts USING fts5(title, body, tokenize='trigram');
+CREATE TABLE IF NOT EXISTS stylebooks (
+  user_id INTEGER PRIMARY KEY REFERENCES users(id),
+  content TEXT NOT NULL,
+  source_count INTEGER NOT NULL DEFAULT 0,
+  model TEXT,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS drafts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  source_kind TEXT NOT NULL,      -- disclosure | mail | text
+  source_ref TEXT,
+  source_title TEXT,
+  source_text TEXT NOT NULL,
+  draft TEXT NOT NULL,
+  checks_json TEXT NOT NULL,
+  examples_json TEXT NOT NULL,
+  model TEXT,
+  created_at TEXT NOT NULL
+);
+-- 질문 답변
+CREATE TABLE IF NOT EXISTS chats (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  question TEXT NOT NULL,
+  answer TEXT NOT NULL,
+  trace_json TEXT NOT NULL,
+  model TEXT,
+  created_at TEXT NOT NULL
+);
+-- 정기 브리핑 (하루 3~4회, 조용히)
+CREATE TABLE IF NOT EXISTS briefings (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  slot TEXT UNIQUE NOT NULL,
+  content TEXT NOT NULL,
+  model TEXT,
+  created_at TEXT NOT NULL
+);
+-- AI 사용량 (비용 한도·월간 리포트)
+CREATE TABLE IF NOT EXISTS llm_usage (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER,
+  at TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  model TEXT NOT NULL,
+  purpose TEXT NOT NULL,
+  input_tokens INTEGER NOT NULL,
+  output_tokens INTEGER NOT NULL,
+  cost_krw REAL NOT NULL
+);
+"""
+
+# 기존 DB에 나중에 추가한 열 (없으면 ALTER TABLE)
+MIGRATIONS = [
+    ("disclosures", "source", "TEXT NOT NULL DEFAULT 'dart'"),
+    ("disclosures", "link", "TEXT"),
+    ("claims", "written_url", "TEXT"),
+    ("claims", "written_at", "TEXT"),
+    ("users", "reporter_id", "TEXT"),
+    ("users", "monthly_limit_krw", "INTEGER"),
+]
+
+
+def now() -> datetime:
+    return datetime.now(KST)
+
+
+def now_iso() -> str:
+    return now().isoformat(timespec="seconds")
+
+
+class Database:
+    def __init__(self, path: Path | str):
+        if str(path) != ":memory:":
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+        self._conn = sqlite3.connect(str(path), check_same_thread=False, isolation_level=None)
+        self._conn.row_factory = sqlite3.Row
+        self._lock = threading.RLock()
+        with self._lock:
+            self._conn.execute("PRAGMA journal_mode=WAL")
+            self._conn.execute("PRAGMA foreign_keys=ON")
+            self._conn.executescript(SCHEMA)
+            for table, column, decl in MIGRATIONS:
+                cols = {r[1] for r in self._conn.execute(f"PRAGMA table_info({table})")}
+                if column not in cols:
+                    self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+
+    @contextmanager
+    def tx(self) -> Iterator[sqlite3.Connection]:
+        with self._lock:
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                yield self._conn
+                self._conn.execute("COMMIT")
+            except BaseException:
+                self._conn.execute("ROLLBACK")
+                raise
+
+    def query(self, sql: str, params: tuple | dict = ()) -> list[dict[str, Any]]:
+        with self._lock:
+            return [dict(r) for r in self._conn.execute(sql, params).fetchall()]
+
+    def one(self, sql: str, params: tuple | dict = ()) -> dict[str, Any] | None:
+        rows = self.query(sql, params)
+        return rows[0] if rows else None
+
+    def execute(self, sql: str, params: tuple | dict = ()) -> int:
+        with self._lock:
+            cur = self._conn.execute(sql, params)
+            return cur.rowcount
+
+    # --- kv ---------------------------------------------------------------
+    def get(self, key: str, default: str | None = None) -> str | None:
+        row = self.one("SELECT value FROM kv WHERE key=?", (key,))
+        return row["value"] if row else default
+
+    def set(self, key: str, value: str) -> None:
+        self.execute(
+            "INSERT INTO kv(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (key, value),
+        )
+
+    def log(self, kind: str, detail: str = "") -> None:
+        self.execute("INSERT INTO events(at, kind, detail) VALUES(?,?,?)", (now_iso(), kind, detail[:2000]))
+        # 이벤트는 최근 5,000건만 보관
+        self.execute("DELETE FROM events WHERE id <= (SELECT MAX(id) - 5000 FROM events)")
 ```
 
 ---
@@ -298,162 +712,6 @@ class Rules:
 
 ---
 
-# [첨부] newsbot/db.py
-
-```py
-"""SQLite 저장소. 한 프로세스 안에서 여러 스레드가 공유한다."""
-
-from __future__ import annotations
-
-import sqlite3
-import threading
-from contextlib import contextmanager
-from datetime import datetime
-from pathlib import Path
-from typing import Any, Iterator
-
-from .config import KST
-
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS users (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  username TEXT UNIQUE NOT NULL,
-  display_name TEXT NOT NULL,
-  pw_hash TEXT NOT NULL,
-  role TEXT NOT NULL DEFAULT 'reporter',
-  active INTEGER NOT NULL DEFAULT 1,
-  created_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS sessions (
-  token TEXT PRIMARY KEY,
-  user_id INTEGER NOT NULL REFERENCES users(id),
-  expires_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS invites (
-  code TEXT PRIMARY KEY,
-  role TEXT NOT NULL DEFAULT 'reporter',
-  created_by INTEGER,
-  created_at TEXT NOT NULL,
-  expires_at TEXT NOT NULL,
-  used_by INTEGER,
-  used_at TEXT
-);
-CREATE TABLE IF NOT EXISTS subscriptions (
-  user_id INTEGER NOT NULL REFERENCES users(id),
-  kind TEXT NOT NULL,           -- company | keyword | all
-  value TEXT NOT NULL,
-  PRIMARY KEY (user_id, kind, value)
-);
-CREATE TABLE IF NOT EXISTS companies (
-  corp_code TEXT PRIMARY KEY,
-  corp_name TEXT NOT NULL,
-  induty_code TEXT,
-  fetched_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS disclosures (
-  rcept_no TEXT PRIMARY KEY,
-  corp_code TEXT NOT NULL,
-  corp_name TEXT NOT NULL,
-  stock_code TEXT,
-  report_nm TEXT NOT NULL,
-  rcept_dt TEXT NOT NULL,
-  flr_nm TEXT,
-  rm TEXT,
-  level TEXT NOT NULL,
-  keyword TEXT,
-  is_correction INTEGER NOT NULL DEFAULT 0,
-  watched INTEGER NOT NULL DEFAULT 0,
-  first_seen_at TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_disc_seen ON disclosures(first_seen_at DESC);
-CREATE TABLE IF NOT EXISTS claims (
-  rcept_no TEXT PRIMARY KEY REFERENCES disclosures(rcept_no),
-  user_id INTEGER NOT NULL REFERENCES users(id),
-  claimed_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS push_subs (
-  endpoint TEXT PRIMARY KEY,
-  user_id INTEGER NOT NULL REFERENCES users(id),
-  p256dh TEXT NOT NULL,
-  auth TEXT NOT NULL,
-  created_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS events (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  at TEXT NOT NULL,
-  kind TEXT NOT NULL,           -- poll | error | alert | login ...
-  detail TEXT
-);
-CREATE TABLE IF NOT EXISTS kv (
-  key TEXT PRIMARY KEY,
-  value TEXT
-);
-"""
-
-
-def now() -> datetime:
-    return datetime.now(KST)
-
-
-def now_iso() -> str:
-    return now().isoformat(timespec="seconds")
-
-
-class Database:
-    def __init__(self, path: Path | str):
-        if str(path) != ":memory:":
-            Path(path).parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(str(path), check_same_thread=False, isolation_level=None)
-        self._conn.row_factory = sqlite3.Row
-        self._lock = threading.RLock()
-        with self._lock:
-            self._conn.execute("PRAGMA journal_mode=WAL")
-            self._conn.execute("PRAGMA foreign_keys=ON")
-            self._conn.executescript(SCHEMA)
-
-    @contextmanager
-    def tx(self) -> Iterator[sqlite3.Connection]:
-        with self._lock:
-            self._conn.execute("BEGIN IMMEDIATE")
-            try:
-                yield self._conn
-                self._conn.execute("COMMIT")
-            except BaseException:
-                self._conn.execute("ROLLBACK")
-                raise
-
-    def query(self, sql: str, params: tuple | dict = ()) -> list[dict[str, Any]]:
-        with self._lock:
-            return [dict(r) for r in self._conn.execute(sql, params).fetchall()]
-
-    def one(self, sql: str, params: tuple | dict = ()) -> dict[str, Any] | None:
-        rows = self.query(sql, params)
-        return rows[0] if rows else None
-
-    def execute(self, sql: str, params: tuple | dict = ()) -> int:
-        with self._lock:
-            cur = self._conn.execute(sql, params)
-            return cur.rowcount
-
-    # --- kv ---------------------------------------------------------------
-    def get(self, key: str, default: str | None = None) -> str | None:
-        row = self.one("SELECT value FROM kv WHERE key=?", (key,))
-        return row["value"] if row else default
-
-    def set(self, key: str, value: str) -> None:
-        self.execute(
-            "INSERT INTO kv(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-            (key, value),
-        )
-
-    def log(self, kind: str, detail: str = "") -> None:
-        self.execute("INSERT INTO events(at, kind, detail) VALUES(?,?,?)", (now_iso(), kind, detail[:2000]))
-        # 이벤트는 최근 5,000건만 보관
-        self.execute("DELETE FROM events WHERE id <= (SELECT MAX(id) - 5000 FROM events)")
-```
-
----
-
 # [첨부] newsbot/dart.py
 
 ```py
@@ -466,7 +724,11 @@ OpenDART 공시검색 API는 공시 제출 후 약 15분 뒤에 반영되고, �
 
 from __future__ import annotations
 
+import html
+import io
 import logging
+import re
+import zipfile
 from dataclasses import dataclass
 from datetime import timedelta
 
@@ -528,6 +790,66 @@ class DartClient:
 
     async def company(self, corp_code: str) -> dict:
         return await self._get("company.json", {"corp_code": corp_code})
+
+    async def document_text(self, rcept_no: str, limit: int = 15000) -> str:
+        """공시 원문(zip 안의 XML)을 글자만 뽑아 돌려준다. 초안·질문의 근거 자료용."""
+        if self.calls_today() >= self.daily_limit:
+            raise DartLimitReached("LOCAL", "오늘 호출 한도 도달")
+        self.db.set(self._count_key(), str(self.calls_today() + 1))
+        resp = await self.http.get(f"{BASE}/document.xml", params={"crtfc_key": self.api_key, "rcept_no": rcept_no})
+        resp.raise_for_status()
+        if not resp.content.startswith(b"PK"):
+            raise DartError("DOC", "원문을 받지 못했습니다")
+        texts = []
+        with zipfile.ZipFile(io.BytesIO(resp.content)) as z:
+            for name in z.namelist():
+                raw = z.read(name)
+                for enc in ("utf-8", "euc-kr", "cp949"):
+                    try:
+                        xml = raw.decode(enc)
+                        break
+                    except UnicodeDecodeError:
+                        continue
+                else:
+                    continue
+                text = re.sub(r"<[^>]+>", " ", xml)
+                text = html.unescape(re.sub(r"[ \t\r\f\v]+", " ", text))
+                texts.append(re.sub(r"\n\s*\n+", "\n", text).strip())
+        return "\n".join(texts)[:limit]
+
+    async def corp_code(self, name: str, cache_path) -> str | None:
+        """회사명 → DART 고유번호. 전체 목록(corpCode.xml)을 주 1회 받아 파일로 캐시한다."""
+        import json
+        import time
+        from pathlib import Path
+
+        row = self.db.one("SELECT corp_code FROM companies WHERE corp_name=?", (name,))
+        if row:
+            return row["corp_code"]
+        path = Path(cache_path)
+        if not path.exists() or time.time() - path.stat().st_mtime > 7 * 86400:
+            self.db.set(self._count_key(), str(self.calls_today() + 1))
+            resp = await self.http.get(f"{BASE}/corpCode.xml", params={"crtfc_key": self.api_key})
+            resp.raise_for_status()
+            with zipfile.ZipFile(io.BytesIO(resp.content)) as z:
+                xml = z.read(z.namelist()[0]).decode("utf-8", errors="replace")
+            mapping = {}
+            for m in re.finditer(r"<corp_code>(\d+)</corp_code>\s*<corp_name>([^<]+)</corp_name>", xml):
+                mapping[m.group(2).strip()] = m.group(1)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(mapping, ensure_ascii=False), encoding="utf-8")
+        mapping = json.loads(path.read_text(encoding="utf-8"))
+        key = "".join(name.split())
+        for n, code in mapping.items():
+            if "".join(n.split()) == key:
+                return code
+        return None
+
+    async def financials(self, corp_code: str, year: int, reprt_code: str = "11011") -> list[dict]:
+        """단일회사 주요계정 (사업보고서 기준). 매출액·영업이익·당기순이익 등."""
+        data = await self._get("fnlttSinglAcnt.json", {"corp_code": corp_code, "bsns_year": str(year),
+                                                       "reprt_code": reprt_code})
+        return data.get("list") or []
 
 
 @dataclass
@@ -626,6 +948,1277 @@ class Collector:
             row,
         )
         return row if inserted else None
+```
+
+---
+
+# [첨부] newsbot/alio.py
+
+```py
+"""알리오 수집기: 공공기관·국립대병원의 수시공시 감시와 결산(손익계산서) 비교.
+
+알리오는 경영공시용 공식 API가 없어서, 사이트 화면이 쓰는 조회 주소를 그대로 쓴다
+(공개 오픈소스 alio-mcp가 쓰는 것과 같은 주소). 사이트 개편 시 고쳐야 할 수 있다.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import re
+import tomllib
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
+from pathlib import Path
+
+import httpx
+from bs4 import BeautifulSoup
+
+from .db import Database, now, now_iso
+
+log = logging.getLogger(__name__)
+BASE = "https://www.alio.go.kr"
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) ChungnyunBriefing/0.2",
+    "Accept": "application/json, text/javascript, */*; q=0.01",
+    "Content-Type": "application/json;charset=UTF-8",
+    "X-Requested-With": "XMLHttpRequest",
+    "Referer": f"{BASE}/item/itemList.do",
+}
+REFRESH_DAYS = 7
+
+
+def _norm(s: str) -> str:
+    return "".join((s or "").split())
+
+
+@dataclass
+class AlioItem:
+    match: str
+    level: str = "yellow"
+    finance: bool = False
+
+
+@dataclass
+class AlioConfig:
+    organizations: list[str] = field(default_factory=list)
+    items: list[AlioItem] = field(default_factory=list)
+    finance_rows: list[str] = field(default_factory=list)
+
+    @classmethod
+    def load(cls, path: Path) -> "AlioConfig":
+        with open(path, "rb") as f:
+            d = tomllib.load(f)
+        return cls(
+            organizations=d.get("organizations", []),
+            items=[AlioItem(i["match"], i.get("level", "yellow"), bool(i.get("finance"))) for i in d.get("items", [])],
+            finance_rows=d.get("finance", {}).get("rows", []),
+        )
+
+
+class AlioClient:
+    def __init__(self, verify: bool = True, http: httpx.AsyncClient | None = None, delay: float = 1.0):
+        self.http = http or httpx.AsyncClient(headers=HEADERS, verify=verify, timeout=30, follow_redirects=True)
+        self.delay = delay
+
+    async def _post(self, path: str, body: dict) -> dict:
+        await asyncio.sleep(self.delay)
+        r = await self.http.post(f"{BASE}{path}", json=body)
+        r.raise_for_status()
+        return r.json()
+
+    async def organs_page(self, page: int) -> tuple[list[dict], int]:
+        d = await self._post("/organ/findOrganApbaList.json",
+                             {"apbaType": [], "jidtDptm": [], "area": [], "apba_id": "", "pageNo": page})
+        node = (d.get("data") or {}).get("organList") or {}
+        result = node.get("result", []) if isinstance(node, dict) else node
+        total = (node.get("page") or {}).get("totalPage", 1) if isinstance(node, dict) else 1
+        return result or [], int(total or 1)
+
+    async def form_list(self) -> list[dict]:
+        d = await self._post("/item/formList.json", {})
+        return d.get("data") or []
+
+    async def susi(self, root_no: str, apba_id: str, page: int = 1) -> list[dict]:
+        d = await self._post("/item/itemReportListSusi.json", {
+            "pageNo": page, "apbaId": apba_id, "apbaType": "", "reportFormRootNo": root_no,
+            "search_word": "", "search_flag": "title", "bid_type": "", "enfc_istt": ""})
+        return (d.get("data") or {}).get("result") or []
+
+    async def report_html(self, disclosure_no: str) -> str:
+        await asyncio.sleep(self.delay)
+        r = await self.http.get(f"{BASE}/item/itemReportRight.do", params={"disclosureNo": disclosure_no},
+                                headers={"Accept": "text/html"})
+        r.raise_for_status()
+        return r.text
+
+
+# --- 결산표 해석 ------------------------------------------------------------
+_NUM = re.compile(r"^[\(△▲\-−]?\s*[\d,]+(\.\d+)?\)?$")
+_YEAR = re.compile(r"(20\d{2})")
+
+
+def parse_tables(html: str) -> list[list[list[str]]]:
+    soup = BeautifulSoup(html, "html.parser")
+    tables = []
+    for t in soup.find_all("table"):
+        rows = []
+        for tr in t.find_all("tr"):
+            cells = [" ".join(c.get_text(" ", strip=True).split()) for c in tr.find_all(["th", "td"])]
+            if any(cells):
+                rows.append(cells)
+        if rows:
+            tables.append(rows)
+    return tables
+
+
+def to_number(cell: str) -> float | None:
+    s = cell.replace(" ", "")
+    if not s or not _NUM.match(s):
+        return None
+    neg = s.startswith(("(", "△", "-", "−")) or s.endswith(")")
+    s = re.sub(r"[^\d.]", "", s)
+    if not s:
+        return None
+    v = float(s)
+    return -v if neg else v
+
+
+def extract_finance(tables: list[list[list[str]]], row_names: list[str]) -> dict | None:
+    """손익계산서 표에서 지정한 줄의 연도별 값을 뽑는다. 최신 연도가 앞으로 오게 정렬."""
+    wanted = [_norm(r) for r in row_names]
+    best, best_hits = None, 0
+    for t in tables:
+        hits = sum(1 for row in t if row and any(w in _norm(row[0]) for w in wanted))
+        if hits > best_hits:
+            best, best_hits = t, hits
+    if not best:
+        return None
+    header = next((r for r in best if sum(1 for c in r if _YEAR.search(c)) >= 2), None)
+    years = [(_YEAR.search(c).group(1) if _YEAR.search(c) else None) for c in header] if header else []
+    rows = []
+    for name, w in zip(row_names, wanted):
+        row = next((r for r in best if r and w in _norm(r[0])), None)
+        if not row:
+            continue
+        values = []
+        for idx, cell in enumerate(row[1:], start=1):
+            v = to_number(cell)
+            if v is None:
+                continue
+            year = years[idx] if idx < len(years) else None
+            values.append({"year": year, "value": v})
+        if values:
+            rows.append({"label": name, "values": values})
+    if not rows:
+        return None
+    if all(v["year"] for r in rows for v in r["values"]):
+        for r in rows:
+            r["values"].sort(key=lambda v: v["year"], reverse=True)
+    unit = next((c for r in best[:3] for c in r if "단위" in c), "")
+    return {"rows": rows, "unit": unit}
+
+
+def compare(finance: dict) -> list[dict]:
+    out = []
+    for r in finance.get("rows", []):
+        vals = r["values"]
+        if not vals:
+            continue
+        cur = vals[0]
+        prev = vals[1] if len(vals) > 1 else None
+        item = {"label": r["label"], "year": cur.get("year"), "value": cur["value"],
+                "prev_year": prev.get("year") if prev else None, "prev": prev["value"] if prev else None}
+        if prev and prev["value"]:
+            item["change"] = cur["value"] - prev["value"]
+            item["pct"] = round((cur["value"] - prev["value"]) / abs(prev["value"]) * 100, 1)
+        out.append(item)
+    return out
+
+
+# --- 수집기 -----------------------------------------------------------------
+class AlioCollector:
+    def __init__(self, client: AlioClient, db: Database, config: AlioConfig):
+        self.client = client
+        self.db = db
+        self.config = config
+
+    def _stale(self, key: str) -> bool:
+        at = self.db.get(key)
+        return not at or now() - datetime.fromisoformat(at) > timedelta(days=REFRESH_DAYS)
+
+    async def resolve_orgs(self) -> list[dict]:
+        if self._stale("alio_orgs_at") or not self.db.one("SELECT 1 FROM alio_orgs"):
+            want = {_norm(n): n for n in self.config.organizations}
+            found: dict[str, dict] = {}
+            first, total = await self.client.organs_page(1)
+            pages = [first]
+            for p in range(2, min(total, 60) + 1):
+                pages.append((await self.client.organs_page(p))[0])
+            for result in pages:
+                for o in result:
+                    key = _norm(o.get("apbaNa", ""))
+                    if key in want and o.get("apbaId"):
+                        found[key] = o
+            with self.db.tx() as c:
+                c.execute("DELETE FROM alio_orgs")
+                for o in found.values():
+                    c.execute("INSERT INTO alio_orgs(apba_id, name, inst_type, dept, resolved_at) VALUES(?,?,?,?,?)",
+                              (o["apbaId"], o.get("apbaNa", ""), o.get("typeNa"), o.get("jidtNa"), now_iso()))
+            missing = [n for k, n in want.items() if k not in found]
+            self.db.set("alio_missing", json.dumps(missing, ensure_ascii=False))
+            self.db.set("alio_orgs_at", now_iso())
+        return self.db.query("SELECT * FROM alio_orgs ORDER BY name")
+
+    async def resolve_items(self) -> list[dict]:
+        cached = self.db.get("alio_items")
+        if cached and not self._stale("alio_items_at"):
+            return json.loads(cached)
+        forms = await self.client.form_list()
+        resolved = []
+        for cfg in self.config.items:
+            key = _norm(cfg.match)
+            for f in forms:
+                name = (f.get("scdnm") or f.get("mcdnm") or "").strip()
+                root = (f.get("reportNos") or f.get("mcd") or "").split(",")[0].strip()
+                if root and key in _norm(name):
+                    resolved.append({"root": root, "name": name, "level": cfg.level, "finance": cfg.finance})
+        # 같은 root가 여러 번 잡히면 하나만
+        uniq = {r["root"]: r for r in resolved}
+        items = list(uniq.values())
+        self.db.set("alio_items", json.dumps(items, ensure_ascii=False))
+        self.db.set("alio_items_at", now_iso())
+        return items
+
+    async def poll(self) -> list[dict]:
+        orgs = await self.resolve_orgs()
+        items = await self.resolve_items()
+        bootstrap = self.db.get("alio_bootstrapped") != "1"
+        new_rows: list[dict] = []
+        for org in orgs:
+            for item in items:
+                try:
+                    results = await self.client.susi(item["root"], org["apba_id"])
+                except (httpx.HTTPError, ValueError) as e:
+                    self.db.log("error", f"alio {org['name']} {item['name']}: {e!r}")
+                    continue
+                for v in results:
+                    row = await self._ingest(org, item, v)
+                    if row:
+                        new_rows.append(row)
+        if bootstrap:
+            self.db.set("alio_bootstrapped", "1")
+        self.db.set("alio_last_poll_at", now_iso())
+        return [] if bootstrap else new_rows
+
+    async def _ingest(self, org: dict, item: dict, v: dict) -> dict | None:
+        ref = (v.get("disclosureNo") or str(v.get("idx") or "")).strip()
+        if not ref:
+            return None
+        key = f"alio:{item['root']}:{ref}"
+        if self.db.one("SELECT 1 FROM disclosures WHERE rcept_no=?", (key,)):
+            return None
+        idate = re.sub(r"\D", "", str(v.get("idate") or ""))[:8]
+        disclosure_no = (v.get("disclosureNo") or "").strip()
+        link = (f"{BASE}/item/itemReportRight.do?disclosureNo={disclosure_no}" if disclosure_no
+                else f"{BASE}/item/itemList.do")
+        row = {
+            "rcept_no": key, "corp_code": org["apba_id"], "corp_name": org["name"], "stock_code": None,
+            "report_nm": f"[{item['name']}] {(v.get('title') or '').strip()}".strip(),
+            "rcept_dt": idate or now().strftime("%Y%m%d"), "flr_nm": org["name"], "rm": None,
+            "level": item["level"], "keyword": item["name"], "is_correction": 0, "watched": 1,
+            "first_seen_at": now_iso(), "source": "alio", "link": link,
+        }
+        self.db.execute(
+            """INSERT OR IGNORE INTO disclosures(rcept_no, corp_code, corp_name, stock_code, report_nm, rcept_dt,
+               flr_nm, rm, level, keyword, is_correction, watched, first_seen_at, source, link)
+               VALUES(:rcept_no,:corp_code,:corp_name,:stock_code,:report_nm,:rcept_dt,:flr_nm,:rm,:level,:keyword,
+                      :is_correction,:watched,:first_seen_at,:source,:link)""", row)
+        if item.get("finance") and disclosure_no:
+            await self._finance(org, item, v, disclosure_no)
+        return row
+
+    async def _finance(self, org: dict, item: dict, v: dict, disclosure_no: str) -> None:
+        try:
+            html = await self.client.report_html(disclosure_no)
+        except httpx.HTTPError as e:
+            self.db.log("error", f"alio finance {org['name']}: {e!r}")
+            return
+        fin = extract_finance(parse_tables(html), self.config.finance_rows)
+        if not fin:
+            self.db.log("error", f"alio finance parse failed: {org['name']} {disclosure_no}")
+            return
+        self.db.execute(
+            """INSERT OR REPLACE INTO alio_finance(disclosure_no, apba_id, org_name, item_name, title, idate,
+               table_json, fetched_at) VALUES(?,?,?,?,?,?,?,?)""",
+            (disclosure_no, org["apba_id"], org["name"], item["name"], v.get("title"),
+             str(v.get("idate") or ""), json.dumps(fin, ensure_ascii=False), now_iso()))
+
+
+def finance_overview(db: Database) -> list[dict]:
+    """기관별 가장 최근 결산 비교."""
+    rows = db.query("""SELECT f.* FROM alio_finance f
+                       WHERE f.fetched_at = (SELECT MAX(fetched_at) FROM alio_finance g WHERE g.apba_id=f.apba_id)
+                       ORDER BY f.org_name""")
+    out = []
+    for r in rows:
+        fin = json.loads(r["table_json"])
+        out.append({"org": r["org_name"], "apba_id": r["apba_id"], "title": r["title"], "idate": r["idate"],
+                    "unit": fin.get("unit", ""), "items": compare(fin),
+                    "url": f"{BASE}/item/itemReportRight.do?disclosureNo={r['disclosure_no']}"})
+    return out
+```
+
+---
+
+# [첨부] newsbot/articles.py
+
+```py
+"""청년의사(docdocdoc.co.kr) 자사 기사 수집과 검색.
+
+- 기자 본인 기사만 모아 스타일북을 만들고, 초안 쓸 때 비슷한 과거 기사를 찾는다.
+- 사내 분석용이며, 요청 사이에 2초씩 쉰다. 회사가 ND소프트에서 DB를 받으면 이 수집은 대체한다.
+- 페이지 구조가 바뀌어도 버티도록 JSON-LD → og 메타 → 본문 영역 순으로 읽는다.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import re
+from dataclasses import dataclass
+from urllib.parse import urljoin
+
+import httpx
+from bs4 import BeautifulSoup
+
+from .db import Database, now_iso
+
+log = logging.getLogger(__name__)
+HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) ChungnyunBriefing/0.2 (internal)"}
+IDX = re.compile(r"articleView\.html\?idxno=(\d+)")
+EMAIL = re.compile(r"([A-Za-z0-9._-]+)@docdocdoc\.co\.kr")
+DATE = re.compile(r"(20\d{2})[.\-](\d{2})[.\-](\d{2})\s+(\d{2}):(\d{2})")
+BODY_SELECTORS = ["#article-view-content-div", "[itemprop=articleBody]", "article.article-veiw-body",
+                  "article.article-view-body", "#articleBody", "article"]
+
+
+@dataclass
+class Article:
+    idxno: int
+    title: str
+    author: str
+    author_id: str
+    section: str
+    published_at: str
+    body: str
+    url: str
+
+
+def parse_list(html: str) -> list[int]:
+    seen, out = set(), []
+    for m in IDX.finditer(html):
+        n = int(m.group(1))
+        if n not in seen:
+            seen.add(n)
+            out.append(n)
+    return out
+
+
+def _jsonld(soup: BeautifulSoup) -> dict:
+    for s in soup.find_all("script", type="application/ld+json"):
+        try:
+            data = json.loads(s.string or "")
+        except (json.JSONDecodeError, TypeError):
+            continue
+        for d in data if isinstance(data, list) else [data]:
+            if isinstance(d, dict) and "Article" in str(d.get("@type", "")):
+                return d
+    return {}
+
+
+def _meta(soup: BeautifulSoup, *names: str) -> str:
+    for n in names:
+        tag = soup.find("meta", attrs={"property": n}) or soup.find("meta", attrs={"name": n})
+        if tag and tag.get("content"):
+            return tag["content"].strip()
+    return ""
+
+
+def parse_article(html: str, idxno: int, url: str) -> Article | None:
+    soup = BeautifulSoup(html, "html.parser")
+    ld = _jsonld(soup)
+    title = (ld.get("headline") or _meta(soup, "og:title") or (soup.title.string if soup.title else "") or "").strip()
+    title = re.sub(r"\s*[-|]\s*청년의사.*$", "", title)
+
+    body_el = None
+    for sel in BODY_SELECTORS:
+        body_el = soup.select_one(sel)
+        if body_el:
+            break
+    if body_el:
+        for junk in body_el.select("script, style, figure, .ad, .ads, iframe"):
+            junk.decompose()
+        body = "\n".join(p.get_text(" ", strip=True) for p in body_el.find_all(["p", "div"]) if p.get_text(strip=True))
+        if not body:
+            body = body_el.get_text("\n", strip=True)
+    else:
+        body = ld.get("articleBody") or ""
+    body = re.sub(r"\n{3,}", "\n\n", body).strip()
+    if not title or len(body) < 100:
+        return None
+
+    text = soup.get_text(" ", strip=True)
+    email = EMAIL.search(body[-400:]) or EMAIL.search(text)
+    author = ""
+    a = ld.get("author")
+    if isinstance(a, dict):
+        author = a.get("name", "")
+    elif isinstance(a, list) and a and isinstance(a[0], dict):
+        author = a[0].get("name", "")
+    if not author:
+        m = re.search(r"([가-힣]{2,4})\s*기자", text)
+        author = m.group(1) if m else ""
+    published = ld.get("datePublished") or _meta(soup, "article:published_time")
+    if not published:
+        m = DATE.search(text)
+        published = f"{m.group(1)}-{m.group(2)}-{m.group(3)}T{m.group(4)}:{m.group(5)}:00+09:00" if m else ""
+    section = _meta(soup, "article:section") or ""
+    return Article(idxno, title, author.replace("기자", "").strip(), email.group(1).lower() if email else "",
+                   section, published, body, url)
+
+
+class ArticleCollector:
+    def __init__(self, db: Database, base: str, http: httpx.AsyncClient | None = None, delay: float = 2.0):
+        self.db = db
+        self.base = base
+        self.http = http or httpx.AsyncClient(headers=HEADERS, timeout=30, follow_redirects=True)
+        self.delay = delay
+
+    async def _get(self, url: str) -> str:
+        await asyncio.sleep(self.delay)
+        r = await self.http.get(url)
+        r.raise_for_status()
+        return r.text
+
+    async def collect_reporter(self, reporter_id: str, max_pages: int = 20, progress=None) -> dict:
+        """기자 ID(이메일 앞부분)의 기사를 모은다. 목록 필터가 안 먹어도 본문의 이메일로 다시 거른다."""
+        reporter_id = reporter_id.strip().lower()
+        added = checked = 0
+        for page in range(1, max_pages + 1):
+            list_url = (f"{self.base}/news/articleList.html?sc_area=I&sc_word={reporter_id}"
+                        f"&view_type=sm&page={page}")
+            ids = parse_list(await self._get(list_url))
+            new_ids = [i for i in ids if not self.db.one("SELECT 1 FROM articles WHERE idxno=?", (i,))]
+            if not ids:
+                break
+            for idxno in new_ids:
+                url = urljoin(self.base, f"/news/articleView.html?idxno={idxno}")
+                checked += 1
+                try:
+                    art = parse_article(await self._get(url), idxno, url)
+                except httpx.HTTPError as e:
+                    self.db.log("error", f"article {idxno}: {e!r}")
+                    continue
+                if art and art.author_id == reporter_id:
+                    self.save(art)
+                    added += 1
+                if progress:
+                    progress(page, added, checked)
+            if not new_ids:
+                break  # 이미 모은 구간에 도달
+        return {"added": added, "checked": checked}
+
+    def save(self, a: Article) -> None:
+        with self.db.tx() as c:
+            c.execute("""INSERT OR REPLACE INTO articles(idxno, title, author, author_id, section, published_at,
+                         body, url, fetched_at) VALUES(?,?,?,?,?,?,?,?,?)""",
+                      (a.idxno, a.title, a.author, a.author_id, a.section, a.published_at, a.body, a.url, now_iso()))
+            c.execute("DELETE FROM articles_fts WHERE rowid=?", (a.idxno,))
+            c.execute("INSERT INTO articles_fts(rowid, title, body) VALUES(?,?,?)", (a.idxno, a.title, a.body))
+
+
+def _fts_query(text: str) -> str:
+    """검색어에서 3글자 이상 덩어리를 뽑아 OR 검색어로 만든다 (trigram 색인)."""
+    words = re.findall(r"[가-힣A-Za-z0-9]{3,}", text)
+    uniq = []
+    for w in words:
+        if w not in uniq:
+            uniq.append(w)
+    return " OR ".join(f'"{w}"' for w in uniq[:12])
+
+
+def search_articles(db: Database, text: str, author_id: str | None = None, limit: int = 5) -> list[dict]:
+    q = _fts_query(text)
+    if not q:
+        return []
+    sql = """SELECT a.idxno, a.title, a.author, a.published_at, a.url, substr(a.body, 1, 1500) AS body
+             FROM articles_fts f JOIN articles a ON a.idxno = f.rowid
+             WHERE articles_fts MATCH ?"""
+    params: list = [q]
+    if author_id:
+        sql += " AND a.author_id = ?"
+        params.append(author_id)
+    sql += " ORDER BY bm25(articles_fts) LIMIT ?"
+    params.append(limit)
+    try:
+        return db.query(sql, tuple(params))
+    except Exception:  # noqa: BLE001 - FTS 문법 오류 시 빈 결과
+        log.exception("fts search failed")
+        return []
+```
+
+---
+
+# [첨부] newsbot/llm.py
+
+```py
+"""AI(LLM) 호출 계층. Claude와 OpenAI를 같은 방식으로 쓰고, 사용량·비용을 기록한다.
+
+등급(tier)
+  fast  : 정기 브리핑 요약 등 대량·단순 작업
+  main  : 질문 답변
+  draft : 스타일북 분석, 기사 초안
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+from dataclasses import dataclass, field
+from typing import Any, Callable
+
+from .config import Settings
+from .db import Database, now, now_iso
+
+log = logging.getLogger(__name__)
+
+# 100만 토큰당 달러 (입력, 출력). Claude는 Anthropic 요금표(2026-10 기준),
+# OpenAI는 공개 요금 정리 글 기준이라 실제 청구서와 대조가 필요하다.
+PRICES_USD = {
+    "claude-haiku-5-5": (0.10, 0.50),
+    "claude-sonnet-5-5": (2.0, 10.0),
+    "claude-opus-5-5": (4.0, 20.0),
+    "gpt-6-luna": (0.10, 0.50),
+    "gpt-6.1-terra": (1.0, 5.0),
+    "gpt-6.1-sol": (2.0, 10.0),
+    "gpt-6-astra": (10.0, 50.0),
+}
+UNKNOWN_PRICE = (4.0, 20.0)  # 모르는 모델은 비싸게 잡아 한도를 넘지 않게
+EFFORT = {"fast": "low", "main": "medium", "draft": "high"}
+MAX_TOKENS = {"fast": 2000, "main": 4000, "draft": 8000}
+
+
+class LLMError(Exception):
+    """사용자에게 그대로 보여줄 수 있는 문구를 담는다."""
+
+
+class BudgetExceeded(LLMError):
+    pass
+
+
+@dataclass
+class Tool:
+    name: str
+    description: str
+    schema: dict
+    func: Callable[[dict], Any]
+
+
+@dataclass
+class Usage:
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read: int = 0
+    cache_write: int = 0
+
+
+@dataclass
+class AgentResult:
+    text: str
+    trace: list = field(default_factory=list)
+    model: str = ""
+
+
+def _run_tool(tools: dict[str, Tool], name: str, args: dict) -> str:
+    tool = tools.get(name)
+    if not tool:
+        return json.dumps({"error": f"없는 도구: {name}"}, ensure_ascii=False)
+    try:
+        result = tool.func(args or {})
+    except Exception as e:  # noqa: BLE001 - 도구 오류는 모델에게 알려 다시 시도하게 함
+        log.exception("tool %s failed", name)
+        return json.dumps({"error": str(e)}, ensure_ascii=False)
+    text = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False, default=str)
+    return text[:20000]
+
+
+class ClaudeBackend:
+    name = "claude"
+
+    def __init__(self, api_key: str, client=None):
+        if client is None:
+            import anthropic
+
+            client = anthropic.Anthropic(api_key=api_key, max_retries=3, timeout=180.0)
+        self.client = client
+
+    @staticmethod
+    def _extra(model: str) -> dict:
+        # Sonnet 5.5 / Opus 5.5는 안전 분류기가 거절하면 서버가 다른 모델로 다시 돌려준다.
+        if "sonnet-5-5" in model or "opus-5" in model or "fable" in model:
+            return {"betas": ["server-side-fallback-2026-07-01"], "fallbacks": "default"}
+        return {}
+
+    def _call(self, model, system, messages, tools, tier):
+        kwargs = dict(
+            model=model,
+            max_tokens=MAX_TOKENS[tier],
+            system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
+            messages=messages,
+            output_config={"effort": EFFORT[tier]},
+            **self._extra(model),
+        )
+        if tools:
+            kwargs["tools"] = [{"name": t.name, "description": t.description, "input_schema": t.schema}
+                               for t in tools]
+        resp = self.client.beta.messages.create(**kwargs)
+        u = resp.usage
+        usage = Usage(u.input_tokens, u.output_tokens,
+                      getattr(u, "cache_read_input_tokens", 0) or 0,
+                      getattr(u, "cache_creation_input_tokens", 0) or 0)
+        if resp.stop_reason == "refusal":
+            raise LLMError("AI가 이 요청을 처리하지 않았어요. 표현을 바꿔 다시 시도해 주세요.")
+        return resp, usage
+
+    def complete(self, model, system, prompt, tier):
+        resp, usage = self._call(model, system, [{"role": "user", "content": prompt}], None, tier)
+        text = "".join(b.text for b in resp.content if getattr(b, "type", "") == "text")
+        return text, [usage]
+
+    def agent(self, model, system, history, tools, tier, max_steps):
+        by_name = {t.name: t for t in tools}
+        messages = list(history)
+        usages, trace = [], []
+        for _ in range(max_steps):
+            resp, usage = self._call(model, system, messages, tools, tier)
+            usages.append(usage)
+            if resp.stop_reason != "tool_use":
+                text = "".join(b.text for b in resp.content if getattr(b, "type", "") == "text")
+                return text, trace, usages
+            messages.append({"role": "assistant", "content": resp.content})
+            results = []
+            for b in resp.content:
+                if getattr(b, "type", "") == "tool_use":
+                    out = _run_tool(by_name, b.name, b.input)
+                    trace.append({"tool": b.name, "input": b.input, "output": out[:2000]})
+                    results.append({"type": "tool_result", "tool_use_id": b.id, "content": out})
+            messages.append({"role": "user", "content": results})
+        return "조회를 여러 번 했지만 답을 정리하지 못했어요. 질문을 좁혀 주세요.", trace, usages
+
+
+class OpenAIBackend:
+    name = "openai"
+
+    def __init__(self, api_key: str, client=None):
+        if client is None:
+            import openai
+
+            client = openai.OpenAI(api_key=api_key, max_retries=3, timeout=180.0)
+        self.client = client
+
+    def _call(self, model, messages, tools, tier):
+        kwargs = dict(model=model, messages=messages, max_completion_tokens=MAX_TOKENS[tier])
+        if tools:
+            kwargs["tools"] = [{"type": "function", "function": {
+                "name": t.name, "description": t.description, "parameters": t.schema}} for t in tools]
+        resp = self.client.chat.completions.create(**kwargs)
+        u = resp.usage
+        return resp, Usage(getattr(u, "prompt_tokens", 0) or 0, getattr(u, "completion_tokens", 0) or 0)
+
+    def complete(self, model, system, prompt, tier):
+        resp, usage = self._call(model, [{"role": "system", "content": system},
+                                         {"role": "user", "content": prompt}], None, tier)
+        return resp.choices[0].message.content or "", [usage]
+
+    def agent(self, model, system, history, tools, tier, max_steps):
+        by_name = {t.name: t for t in tools}
+        messages = [{"role": "system", "content": system}, *history]
+        usages, trace = [], []
+        for _ in range(max_steps):
+            resp, usage = self._call(model, messages, tools, tier)
+            usages.append(usage)
+            msg = resp.choices[0].message
+            calls = msg.tool_calls or []
+            if not calls:
+                return msg.content or "", trace, usages
+            messages.append({"role": "assistant", "content": msg.content,
+                             "tool_calls": [c.model_dump() if hasattr(c, "model_dump") else c for c in calls]})
+            for c in calls:
+                try:
+                    args = json.loads(c.function.arguments or "{}")
+                except json.JSONDecodeError:
+                    args = {}
+                out = _run_tool(by_name, c.function.name, args)
+                trace.append({"tool": c.function.name, "input": args, "output": out[:2000]})
+                messages.append({"role": "tool", "tool_call_id": c.id, "content": out})
+        return "조회를 여러 번 했지만 답을 정리하지 못했어요. 질문을 좁혀 주세요.", trace, usages
+
+
+class LLM:
+    def __init__(self, settings: Settings, db: Database, backend=None):
+        self.settings = settings
+        self.db = db
+        self._backend = backend
+
+    @property
+    def available(self) -> bool:
+        return self._backend is not None or self.settings.llm_ready
+
+    @property
+    def backend(self):
+        if self._backend is None:
+            if not self.settings.llm_ready:
+                raise LLMError("AI API 키가 아직 없어요. 관리자가 .env 에 키를 넣으면 켜집니다.")
+            if self.settings.llm_provider == "claude":
+                self._backend = ClaudeBackend(self.settings.anthropic_api_key)
+            else:
+                self._backend = OpenAIBackend(self.settings.openai_api_key)
+        return self._backend
+
+    def model_for(self, tier: str) -> str:
+        models = self.settings.openai_models if self.backend.name == "openai" else self.settings.claude_models
+        return models[tier]
+
+    # --- 비용 -----------------------------------------------------------
+    def cost_krw(self, model: str, usage: Usage) -> float:
+        pin, pout = PRICES_USD.get(model, UNKNOWN_PRICE)
+        usd = (usage.input_tokens * pin + usage.cache_write * pin * 1.25 + usage.cache_read * pin * 0.1
+               + usage.output_tokens * pout) / 1_000_000
+        return round(usd * self.settings.usd_krw, 2)
+
+    def month_spent(self, user_id: int | None = None) -> float:
+        start = now().replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat(timespec="seconds")
+        if user_id is None:
+            row = self.db.one("SELECT COALESCE(SUM(cost_krw),0) s FROM llm_usage WHERE at >= ?", (start,))
+        else:
+            row = self.db.one("SELECT COALESCE(SUM(cost_krw),0) s FROM llm_usage WHERE at >= ? AND user_id=?",
+                              (start, user_id))
+        return float(row["s"])
+
+    def limit_for(self, user_id: int) -> int:
+        row = self.db.one("SELECT monthly_limit_krw FROM users WHERE id=?", (user_id,))
+        return int(row["monthly_limit_krw"]) if row and row["monthly_limit_krw"] else \
+            self.settings.default_monthly_limit_krw
+
+    def _check_budget(self, user_id: int | None) -> None:
+        if user_id is None:
+            return
+        if self.month_spent(user_id) >= self.limit_for(user_id):
+            raise BudgetExceeded("이번 달 AI 사용 한도를 다 썼어요. 관리자에게 한도 조정을 요청해 주세요.")
+
+    def _record(self, user_id, model, purpose, usages: list[Usage]) -> None:
+        for u in usages:
+            self.db.execute(
+                """INSERT INTO llm_usage(user_id, at, provider, model, purpose, input_tokens, output_tokens, cost_krw)
+                   VALUES(?,?,?,?,?,?,?,?)""",
+                (user_id, now_iso(), self.backend.name, model, purpose,
+                 u.input_tokens + u.cache_read + u.cache_write, u.output_tokens, self.cost_krw(model, u)))
+
+    # --- 호출 -----------------------------------------------------------
+    def complete(self, system: str, prompt: str, tier: str, user_id: int | None, purpose: str) -> tuple[str, str]:
+        self._check_budget(user_id)
+        model = self.model_for(tier)
+        try:
+            text, usages = self.backend.complete(model, system, prompt, tier)
+        except LLMError:
+            raise
+        except Exception as e:  # noqa: BLE001
+            log.exception("llm complete failed")
+            raise LLMError(f"AI 호출에 실패했어요: {type(e).__name__}") from e
+        self._record(user_id, model, purpose, usages)
+        return text, model
+
+    def agent(self, system: str, history: list[dict], tools: list[Tool], tier: str, user_id: int | None,
+              purpose: str, max_steps: int = 6) -> AgentResult:
+        self._check_budget(user_id)
+        model = self.model_for(tier)
+        try:
+            text, trace, usages = self.backend.agent(model, system, history, tools, tier, max_steps)
+        except LLMError:
+            raise
+        except Exception as e:  # noqa: BLE001
+            log.exception("llm agent failed")
+            raise LLMError(f"AI 호출에 실패했어요: {type(e).__name__}") from e
+        self._record(user_id, model, purpose, usages)
+        return AgentResult(text=text, trace=trace, model=model)
+```
+
+---
+
+# [첨부] newsbot/qa.py
+
+```py
+"""질문 답변: AI가 도구로 수집 데이터를 찾아보고 출처를 붙여 답한다.
+
+도구는 모두 읽기 전용이다. 메일·내 기사 도구는 질문한 사람 본인 것만 본다.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+from datetime import timedelta
+
+from .alio import finance_overview
+from .articles import search_articles
+from .config import Settings
+from .dart import VIEW_URL, DartClient
+from .db import Database, now, now_iso
+from .llm import LLM, Tool
+
+SYSTEM = """당신은 한국 의료전문지 '청년의사' 기자를 돕는 취재 보조원입니다. 오늘은 {today}입니다.
+- 반드시 도구로 찾은 자료만 근거로 답합니다. 찾지 못하면 "수집된 자료에서 확인되지 않았습니다"라고 말합니다.
+- 숫자, 날짜, 회사·기관명은 자료에 있는 그대로 씁니다. 추정하지 않습니다.
+- 답변 끝에 '출처' 목록을 붙이고, 자료마다 제목과 링크를 적습니다.
+- 짧고 정확하게, 기자가 바로 쓸 수 있게 한국어로 답합니다.
+- 메일 내용은 질문한 기자 본인의 메일입니다. 다른 사람에게 공유하라고 권하지 않습니다."""
+
+
+def _disc_out(r: dict) -> dict:
+    url = r.get("link") or VIEW_URL.format(rcept_no=r["rcept_no"])
+    return {"id": r["rcept_no"], "source": "알리오" if r.get("source") == "alio" else "DART",
+            "company": r["corp_name"], "title": r["report_nm"], "date": r["rcept_dt"],
+            "level": r["level"], "url": url}
+
+
+def build_tools(settings: Settings, db: Database, user: dict, dart: DartClient | None,
+                loop: asyncio.AbstractEventLoop | None) -> list[Tool]:
+    def run(coro):
+        if loop is None:
+            return asyncio.run(coro)
+        return asyncio.run_coroutine_threadsafe(coro, loop).result(timeout=120)
+
+    def search_disclosures(a: dict):
+        days = max(1, min(int(a.get("days", 7) or 7), 365))
+        since = (now() - timedelta(days=days)).isoformat(timespec="seconds")
+        sql = "SELECT * FROM disclosures WHERE first_seen_at >= ?"
+        params: list = [since]
+        q = (a.get("query") or "").strip()
+        for word in q.split()[:4]:
+            sql += " AND (corp_name LIKE ? OR report_nm LIKE ?)"
+            params += [f"%{word}%", f"%{word}%"]
+        if a.get("level") in ("red", "yellow", "gray"):
+            sql += " AND level=?"
+            params.append(a["level"])
+        if a.get("source") in ("dart", "alio"):
+            sql += " AND source=?"
+            params.append(a["source"])
+        sql += " ORDER BY first_seen_at DESC LIMIT 30"
+        return [_disc_out(r) for r in db.query(sql, tuple(params))]
+
+    def get_disclosure(a: dict):
+        r = db.one("SELECT * FROM disclosures WHERE rcept_no=?", (a.get("id", ""),))
+        if not r:
+            return {"error": "없는 공시"}
+        out = _disc_out(r)
+        if r.get("source", "dart") == "dart" and dart and settings.dart_api_key:
+            try:
+                out["text"] = run(dart.document_text(r["rcept_no"], limit=8000))
+            except Exception as e:  # noqa: BLE001
+                out["text_error"] = str(e)
+        return out
+
+    def company_financials(a: dict):
+        if not (dart and settings.dart_api_key):
+            return {"error": "DART 키가 없어 재무 정보를 조회할 수 없습니다"}
+        name = (a.get("company") or "").strip()
+        year = int(a.get("year") or now().year - 1)
+        code = run(dart.corp_code(name, settings.data_dir / "corpcode.json"))
+        if not code:
+            return {"error": f"DART에서 '{name}' 회사를 찾지 못했습니다"}
+        rows = run(dart.financials(code, year))
+        keep = [{"account": x.get("account_nm"), "fs": x.get("fs_nm"), "this_year": x.get("thstrm_amount"),
+                 "last_year": x.get("frmtrm_amount"), "currency": x.get("currency")} for x in rows]
+        return {"company": name, "year": year, "report": "사업보고서", "rows": keep[:40],
+                "url": f"https://dart.fss.or.kr/dsab007/main.do?textCrpNm={name}"}
+
+    def alio_finance(a: dict):
+        org = (a.get("organization") or "").replace(" ", "")
+        data = [x for x in finance_overview(db) if not org or org in x["org"].replace(" ", "")]
+        return data or {"error": "해당 기관의 결산 자료가 아직 수집되지 않았습니다"}
+
+    def search_my_mail(a: dict):
+        if not settings.mail_enabled:
+            return {"error": "메일 기능이 꺼져 있습니다"}
+        days = max(1, min(int(a.get("days", 14) or 14), 90))
+        since = (now() - timedelta(days=days)).isoformat(timespec="seconds")
+        sql = "SELECT id, sender, subject, sent_at, embargo, substr(body,1,2500) body FROM mails WHERE user_id=? AND first_seen_at>=?"
+        params: list = [user["id"], since]
+        for word in (a.get("query") or "").split()[:4]:
+            sql += " AND (subject LIKE ? OR body LIKE ? OR sender LIKE ?)"
+            params += [f"%{word}%"] * 3
+        sql += " ORDER BY first_seen_at DESC LIMIT 10"
+        return db.query(sql, tuple(params))
+
+    def search_newsroom_articles(a: dict):
+        mine = bool(a.get("mine_only"))
+        rid = (user.get("reporter_id") or "").lower() or None
+        rows = search_articles(db, a.get("query", ""), author_id=rid if mine else None, limit=6)
+        return [{"title": r["title"], "author": r["author"], "date": (r["published_at"] or "")[:10],
+                 "url": r["url"], "excerpt": r["body"][:600]} for r in rows]
+
+    S = lambda props, req=(): {"type": "object", "properties": props, "required": list(req)}  # noqa: E731
+    tools = [
+        Tool("search_disclosures", "수집된 DART·알리오 공시를 기업명·제목 키워드로 찾는다. 최근 며칠인지 정할 수 있다.",
+             S({"query": {"type": "string", "description": "기업명이나 제목 키워드, 띄어쓰기로 여러 개"},
+                "days": {"type": "integer", "description": "최근 며칠 (기본 7)"},
+                "level": {"type": "string", "enum": ["red", "yellow", "gray"]},
+                "source": {"type": "string", "enum": ["dart", "alio"]}}), search_disclosures),
+        Tool("get_disclosure", "공시 하나의 상세와 DART 원문 일부를 가져온다. id는 search_disclosures 결과의 id.",
+             S({"id": {"type": "string"}}, ["id"]), get_disclosure),
+        Tool("company_financials", "상장사의 사업보고서 주요 계정(매출액, 영업이익, 당기순이익 등)을 DART에서 조회한다.",
+             S({"company": {"type": "string", "description": "DART 회사명"},
+                "year": {"type": "integer", "description": "사업연도 (예: 2025)"}}, ["company"]), company_financials),
+        Tool("alio_finance", "알리오에서 수집한 공공기관·국립대병원 결산(손익계산서) 전년 대비 비교를 가져온다.",
+             S({"organization": {"type": "string", "description": "기관명 일부 (비우면 전체)"}}), alio_finance),
+        Tool("search_newsroom_articles", "청년의사 과거 기사를 검색한다. mine_only=true면 질문한 기자 본인 기사만.",
+             S({"query": {"type": "string"}, "mine_only": {"type": "boolean"}}, ["query"]), search_newsroom_articles),
+    ]
+    if settings.mail_enabled:
+        tools.append(Tool("search_my_mail", "질문한 기자 본인의 보도자료 메일을 검색한다 (제목·본문·보낸 사람).",
+                          S({"query": {"type": "string"}, "days": {"type": "integer"}}), search_my_mail))
+    return tools
+
+
+def ask(settings: Settings, db: Database, llm: LLM, user: dict, question: str, dart: DartClient | None,
+        loop: asyncio.AbstractEventLoop | None) -> dict:
+    """동기 함수 (스레드에서 실행)."""
+    recent = db.query("SELECT question, answer FROM chats WHERE user_id=? ORDER BY id DESC LIMIT 3", (user["id"],))
+    history: list[dict] = []
+    for c in reversed(recent):
+        history += [{"role": "user", "content": c["question"]}, {"role": "assistant", "content": c["answer"][:3000]}]
+    history.append({"role": "user", "content": question})
+    tools = build_tools(settings, db, user, dart, loop)
+    system = SYSTEM.format(today=now().strftime("%Y년 %m월 %d일 %H:%M"))
+    result = llm.agent(system, history, tools, tier="main", user_id=user["id"], purpose="question")
+    db.execute("INSERT INTO chats(user_id, question, answer, trace_json, model, created_at) VALUES(?,?,?,?,?,?)",
+               (user["id"], question, result.text, json.dumps(result.trace, ensure_ascii=False), result.model,
+                now_iso()))
+    return {"answer": result.text, "trace": [{"tool": t["tool"], "input": t["input"]} for t in result.trace],
+            "model": result.model}
+
+
+# --- 정기 브리핑 -------------------------------------------------------------
+DIGEST_SYSTEM = """당신은 의료전문지 편집국의 아침·점심·저녁 브리핑 담당입니다. 주어진 공시 목록만 근거로,
+기자가 30초 안에 읽을 수 있게 핵심 5줄 이내로 정리합니다. 목록에 없는 내용은 쓰지 않습니다."""
+
+
+def make_digest(db: Database, llm: LLM | None, slot: str, since: str) -> dict | None:
+    rows = db.query("""SELECT corp_name, report_nm, level, source FROM disclosures
+                       WHERE first_seen_at >= ? AND level != 'gray' ORDER BY level='red' DESC, first_seen_at DESC
+                       LIMIT 60""", (since,))
+    red = [r for r in rows if r["level"] == "red"]
+    lines = [f"- {'[중요] ' if r['level'] == 'red' else ''}{r['corp_name']}: {r['report_nm']}" for r in rows]
+    base = f"지난 브리핑 이후 공시 {len(rows)}건 (중요 {len(red)}건)"
+    content, model = base + ("\n" + "\n".join(lines[:8]) if lines else "\n새 공시가 없습니다."), None
+    if llm and llm.available and rows:
+        try:
+            content, model = llm.complete(DIGEST_SYSTEM, base + "\n" + "\n".join(lines), tier="fast",
+                                          user_id=None, purpose="digest")
+            content = base + "\n" + content.strip()
+        except Exception as e:  # noqa: BLE001 - AI 실패 시 목록형으로
+            db.log("error", f"digest llm: {e}")
+    db.execute("INSERT OR IGNORE INTO briefings(slot, content, model, created_at) VALUES(?,?,?,?)",
+               (slot, content, model, now_iso()))
+    return db.one("SELECT * FROM briefings WHERE slot=?", (slot,))
+```
+
+---
+
+# [첨부] newsbot/writing.py
+
+```py
+"""스타일북 만들기와 기사 초안 작성.
+
+파인튜닝은 하지 않는다. 기자 본인 기사에서 뽑은 '스타일북'과 비슷한 과거 기사 몇 편을
+매번 함께 넘기고, 초안의 숫자가 원자료에 있는지 대조해 표시한다. 출고는 항상 기자가 한다.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+
+from .articles import search_articles
+from .db import Database, now_iso
+from .llm import LLM, LLMError
+
+STYLEBOOK_SYSTEM = """당신은 한국 의료전문지 '청년의사'의 편집 데스크입니다.
+한 기자가 쓴 기사들을 읽고, 이 기자의 문체를 다른 사람이 따라 쓸 수 있도록 '스타일북'을 만듭니다.
+기사 내용(사실)을 요약하지 말고, 쓰는 방식만 정리하세요. 기사 원문 문장을 길게 베끼지 마세요."""
+
+STYLEBOOK_PROMPT = """아래는 {author} 기자의 기사 {n}편입니다.
+
+다음 항목으로 스타일북을 한국어 마크다운으로 써 주세요. 각 항목에 짧은 예시 표현을 붙이세요.
+1. 기사 유형별 구조 (스트레이트, 해설, 인터뷰 등 실제로 보이는 유형만)
+2. 제목과 부제 쓰는 법 (길이, 따옴표 사용, 숫자 표기)
+3. 리드 문장 패턴 (첫 문장에 무엇을 먼저 쓰는지)
+4. 인용 방식 (직접·간접 인용 비율, '~고 말했다/밝혔다' 등 서술어)
+5. 문장 길이와 리듬, 단락 길이
+6. 자주 쓰는 표현과 피하는 표현
+7. 숫자·단위·기관명·직함 표기 규칙
+8. 마무리 방식
+
+{articles}"""
+
+DRAFT_SYSTEM = """당신은 한국 의료전문지 '청년의사'의 기자를 돕는 초안 작성 도우미입니다.
+반드시 지킬 것:
+- 원자료에 있는 사실만 씁니다. 원자료에 없는 숫자, 인명, 기관명, 인용문을 만들지 않습니다.
+- 확인이 필요한 부분은 [확인 필요]라고 표시합니다. 취재가 필요한 부분은 [취재 필요: 무엇]으로 남깁니다.
+- 아래 기자 스타일북을 따르고, 참고 기사의 문장을 그대로 베끼지 않습니다.
+- 형식: 첫 줄 제목, 둘째 줄 부제(선택), 빈 줄, 본문. 마지막 줄에 '○○○ 기자' 대신 [기자명]을 둡니다.
+
+# 기자 스타일북
+{stylebook}"""
+
+DRAFT_PROMPT = """다음 원자료로 {kind} 기사 초안을 써 주세요. 분량은 600~1,000자.
+
+# 원자료 ({source_title})
+{source}
+
+# 참고: 이 기자가 예전에 쓴 비슷한 기사 (문체 참고용, 사실 근거로 쓰지 말 것)
+{examples}"""
+
+DEFAULT_STYLEBOOK = """(아직 이 기자의 스타일북이 없습니다. 청년의사 일반 스트레이트 기사 형식을 따릅니다:
+제목은 핵심 사실을 30자 안팎으로, 리드는 누가·무엇을·언제를 한 문장에, 둘째 단락부터 배경과 수치,
+인용은 '~고 밝혔다/말했다'로 맺습니다.)"""
+
+_NUM = re.compile(r"\d[\d,]*(?:\.\d+)?")
+
+
+def build_stylebook(db: Database, llm: LLM, user: dict, max_articles: int = 30) -> dict:
+    reporter_id = (user.get("reporter_id") or "").strip().lower()
+    if not reporter_id:
+        raise LLMError("설정에서 기자 ID(이메일 앞부분)를 먼저 입력해 주세요.")
+    arts = db.query("SELECT title, body, published_at FROM articles WHERE author_id=? "
+                    "ORDER BY published_at DESC LIMIT ?", (reporter_id, max_articles))
+    if len(arts) < 5:
+        raise LLMError(f"스타일북을 만들려면 기사가 5편 이상 필요해요 (지금 {len(arts)}편). 먼저 '내 기사 가져오기'를 하세요.")
+    joined = "\n\n".join(f"## {a['title']} ({(a['published_at'] or '')[:10]})\n{a['body'][:1800]}" for a in arts)
+    text, model = llm.complete(STYLEBOOK_SYSTEM,
+                               STYLEBOOK_PROMPT.format(author=user["display_name"], n=len(arts), articles=joined),
+                               tier="draft", user_id=user["id"], purpose="stylebook")
+    db.execute("""INSERT INTO stylebooks(user_id, content, source_count, model, updated_at) VALUES(?,?,?,?,?)
+                  ON CONFLICT(user_id) DO UPDATE SET content=excluded.content, source_count=excluded.source_count,
+                  model=excluded.model, updated_at=excluded.updated_at""",
+               (user["id"], text.strip(), len(arts), model, now_iso()))
+    return {"content": text.strip(), "source_count": len(arts), "model": model}
+
+
+def _digits(s: str) -> str:
+    return s.replace(",", "")
+
+
+def check_numbers(draft: str, source: str) -> list[dict]:
+    """초안의 숫자가 원자료에 있는지 대조. 연도·날짜처럼 짧은 숫자도 포함한다."""
+    src = _digits(source)
+    out, seen = [], set()
+    for m in _NUM.finditer(draft):
+        raw = m.group(0)
+        n = _digits(raw).rstrip(".")
+        if n in seen or len(n) < 2:
+            continue
+        seen.add(n)
+        start = max(0, m.start() - 12)
+        out.append({"number": raw, "found": n in src, "context": draft[start:m.end() + 12].replace("\n", " ")})
+    return out
+
+
+def make_draft(db: Database, llm: LLM, user: dict, source_kind: str, source_ref: str | None, source_title: str,
+               source_text: str, kind: str = "스트레이트") -> dict:
+    if len(source_text.strip()) < 50:
+        raise LLMError("원자료가 너무 짧아요. 보도자료나 공시 본문을 붙여 넣어 주세요.")
+    sb = db.one("SELECT content FROM stylebooks WHERE user_id=?", (user["id"],))
+    stylebook = sb["content"] if sb else DEFAULT_STYLEBOOK
+    reporter_id = (user.get("reporter_id") or "").strip().lower() or None
+    examples = search_articles(db, f"{source_title} {source_text[:500]}", author_id=reporter_id, limit=3)
+    if not examples and reporter_id:
+        examples = search_articles(db, f"{source_title} {source_text[:500]}", limit=3)
+    ex_text = "\n\n".join(f"## {e['title']}\n{e['body'][:1200]}" for e in examples) or "(없음)"
+    text, model = llm.complete(DRAFT_SYSTEM.format(stylebook=stylebook),
+                               DRAFT_PROMPT.format(kind=kind, source_title=source_title,
+                                                   source=source_text[:15000], examples=ex_text),
+                               tier="draft", user_id=user["id"], purpose="draft")
+    checks = check_numbers(text, source_text)
+    ex_meta = [{"title": e["title"], "url": e["url"]} for e in examples]
+    cur = db.execute(
+        """INSERT INTO drafts(user_id, source_kind, source_ref, source_title, source_text, draft, checks_json,
+           examples_json, model, created_at) VALUES(?,?,?,?,?,?,?,?,?,?)""",
+        (user["id"], source_kind, source_ref, source_title, source_text[:20000], text,
+         json.dumps(checks, ensure_ascii=False), json.dumps(ex_meta, ensure_ascii=False), model, now_iso()))
+    del cur
+    row = db.one("SELECT id FROM drafts WHERE user_id=? ORDER BY id DESC LIMIT 1", (user["id"],))
+    return {"id": row["id"], "draft": text, "checks": checks, "examples": ex_meta, "model": model}
+```
+
+---
+
+# [첨부] newsbot/mail.py
+
+```py
+"""보도자료 메일 브리핑 (기자 본인만 봄).
+
+- 기본은 꺼져 있음(MAIL_ENABLED=false). 개인정보 국외 이전 등 법무·IT 검토 후 켠다.
+- 기자가 지정한 메일함(라벨) 하나만 읽기 전용으로 연다(EXAMINE, BODY.PEEK: 읽음 표시도 안 바뀜).
+- 비밀번호(앱 비밀번호)는 data/secret.key 로 암호화해 저장한다.
+- AI 요약은 MAIL_AI_SUMMARY=true 일 때만 (메일 본문이 해외 AI API로 나가기 때문).
+"""
+
+from __future__ import annotations
+
+import email
+import imaplib
+import logging
+import re
+from datetime import datetime
+from email.header import decode_header, make_header
+from email.utils import parsedate_to_datetime
+from pathlib import Path
+
+from cryptography.fernet import Fernet
+
+from .config import KST
+from .db import Database, now_iso
+
+log = logging.getLogger(__name__)
+EMBARGO = re.compile(r"(엠바고|보도\s*시점|보도\s*일시|보도\s*가능|보도\s*유예)[^\n]{0,60}")
+
+
+class Vault:
+    def __init__(self, data_dir: Path):
+        path = data_dir / "secret.key"
+        if not path.exists():
+            data_dir.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(Fernet.generate_key())
+        self.f = Fernet(path.read_bytes())
+
+    def seal(self, text: str) -> str:
+        return self.f.encrypt(text.encode()).decode()
+
+    def open(self, token: str) -> str:
+        return self.f.decrypt(token.encode()).decode()
+
+
+def _decode(value: str | None) -> str:
+    if not value:
+        return ""
+    try:
+        return str(make_header(decode_header(value)))
+    except Exception:  # noqa: BLE001
+        return value
+
+
+def _body(msg: email.message.Message) -> str:
+    parts = msg.walk() if msg.is_multipart() else [msg]
+    plain, html = "", ""
+    for part in parts:
+        ctype = part.get_content_type()
+        if part.get_content_disposition() == "attachment":
+            continue
+        try:
+            payload = part.get_payload(decode=True)
+        except Exception:  # noqa: BLE001
+            continue
+        if not payload:
+            continue
+        text = payload.decode(part.get_content_charset() or "utf-8", errors="replace")
+        if ctype == "text/plain" and not plain:
+            plain = text
+        elif ctype == "text/html" and not html:
+            html = re.sub(r"<(script|style)[\s\S]*?</\1>", " ", text, flags=re.I)
+            html = re.sub(r"<br\s*/?>|</p>|</div>", "\n", html, flags=re.I)
+            html = re.sub(r"<[^>]+>", " ", html)
+    text = plain or html
+    text = re.sub(r"&nbsp;", " ", text)
+    text = re.sub(r"[ \t]+", " ", text)
+    return re.sub(r"\n\s*\n+", "\n\n", text).strip()
+
+
+def find_embargo(subject: str, body: str) -> str:
+    m = EMBARGO.search(subject) or EMBARGO.search(body[:3000])
+    return m.group(0).strip() if m else ""
+
+
+def parse_message(raw: bytes) -> dict:
+    msg = email.message_from_bytes(raw)
+    subject = _decode(msg.get("Subject"))
+    body = _body(msg)
+    sent = ""
+    try:
+        dt = parsedate_to_datetime(msg.get("Date"))
+        sent = dt.astimezone(KST).isoformat(timespec="seconds") if dt else ""
+    except (TypeError, ValueError):
+        pass
+    return {"sender": _decode(msg.get("From")), "subject": subject, "sent_at": sent, "body": body[:30000],
+            "embargo": find_embargo(subject, body)}
+
+
+def fetch_new(db: Database, vault: Vault, account: dict, imap_factory=imaplib.IMAP4_SSL, max_new: int = 50) -> int:
+    """동기 함수(스레드에서 실행). 새 메일 수를 돌려준다."""
+    password = vault.open(account["secret_enc"])
+    imap = imap_factory(account["host"])
+    try:
+        imap.login(account["username"], password)
+        status, _ = imap.select(f'"{account["folder"]}"', readonly=True)
+        if status != "OK":
+            raise RuntimeError(f"메일함 '{account['folder']}'을 열 수 없습니다")
+        last = int(account["last_uid"] or 0)
+        status, data = imap.uid("search", None, f"UID {last + 1}:*")
+        uids = [int(u) for u in (data[0] or b"").split() if int(u) > last]
+        if last == 0:
+            uids = uids[-max_new:]  # 처음 연결 때는 최근 메일만
+        added = 0
+        for uid in uids[:max_new]:
+            status, parts = imap.uid("fetch", str(uid), "(BODY.PEEK[])")
+            raw = next((p[1] for p in parts if isinstance(p, tuple)), None)
+            if not raw:
+                continue
+            m = parse_message(raw)
+            n = db.execute("""INSERT OR IGNORE INTO mails(user_id, uid, sender, subject, sent_at, embargo, body,
+                              first_seen_at) VALUES(?,?,?,?,?,?,?,?)""",
+                           (account["user_id"], uid, m["sender"], m["subject"], m["sent_at"], m["embargo"],
+                            m["body"], now_iso()))
+            added += n
+        if uids:
+            db.execute("UPDATE mail_accounts SET last_uid=?, last_error=NULL, updated_at=? WHERE user_id=?",
+                       (max(uids), now_iso(), account["user_id"]))
+        else:
+            db.execute("UPDATE mail_accounts SET last_error=NULL, updated_at=? WHERE user_id=?",
+                       (now_iso(), account["user_id"]))
+        return added
+    finally:
+        try:
+            imap.logout()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def poll_all(db: Database, vault: Vault) -> None:
+    for acc in db.query("SELECT * FROM mail_accounts WHERE enabled=1"):
+        try:
+            fetch_new(db, vault, acc)
+        except Exception as e:  # noqa: BLE001 - 한 사람 오류가 전체를 막지 않게
+            msg = str(e)[:300]
+            db.execute("UPDATE mail_accounts SET last_error=?, updated_at=? WHERE user_id=?",
+                       (msg, now_iso(), acc["user_id"]))
+            db.log("error", f"mail user {acc['user_id']}: {msg}")
+
+
+def today_start() -> str:
+    return datetime.now(KST).replace(hour=0, minute=0, second=0, microsecond=0).isoformat(timespec="seconds")
 ```
 
 ---
@@ -900,9 +2493,10 @@ def payload_for(row: dict, public_url: str) -> dict:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from contextlib import asynccontextmanager
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
@@ -910,10 +2504,13 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import auth
-from .config import Settings
-from .dart import VIEW_URL, Collector, DartClient, DartError, DartLimitReached
+from . import auth, mail, qa, writing
+from .alio import AlioClient, AlioCollector, AlioConfig, finance_overview, parse_tables
+from .articles import ArticleCollector
+from .config import KST, Settings
+from .dart import VIEW_URL, Collector, DartClient, DartLimitReached
 from .db import Database, now, now_iso
+from .llm import LLM, LLMError
 from .push import Pusher, payload_for, recipients
 from .rules import RED, Rules
 
@@ -922,6 +2519,7 @@ STATIC = Path(__file__).resolve().parent / "static"
 COOKIE = "nb_session"
 
 
+# --- 입력 모델 ---------------------------------------------------------------
 class LoginIn(BaseModel):
     username: str
     password: str
@@ -948,8 +2546,44 @@ class InviteIn(BaseModel):
     role: str = Field(default="reporter", pattern=r"^(reporter|admin)$")
 
 
+class AskIn(BaseModel):
+    question: str = Field(min_length=2, max_length=2000)
+
+
+class DraftIn(BaseModel):
+    source_kind: str = Field(pattern=r"^(disclosure|mail|text)$")
+    source_ref: str | None = None
+    title: str = Field(default="", max_length=200)
+    text: str = Field(default="", max_length=40000)
+    kind: str = Field(default="스트레이트", max_length=20)
+
+
+class StylebookIn(BaseModel):
+    content: str = Field(min_length=10, max_length=30000)
+
+
+class ReporterIn(BaseModel):
+    reporter_id: str = Field(min_length=2, max_length=40, pattern=r"^[A-Za-z0-9._-]+$")
+
+
+class MailAccountIn(BaseModel):
+    host: str = Field(default="imap.gmail.com", max_length=100)
+    username: str = Field(min_length=3, max_length=120)
+    password: str = Field(min_length=4, max_length=200)
+    folder: str = Field(default="보도자료", min_length=1, max_length=100)
+
+
+class WrittenIn(BaseModel):
+    url: str = Field(default="", max_length=500)
+
+
+class LimitIn(BaseModel):
+    krw: int = Field(ge=0, le=10_000_000)
+
+
+# --- 백그라운드 작업 ---------------------------------------------------------
 class Poller:
-    """백그라운드 수집 루프."""
+    """DART 수집 루프."""
 
     def __init__(self, settings: Settings, db: Database, rules: Rules, pusher: Pusher):
         self.settings = settings
@@ -979,44 +2613,98 @@ class Poller:
             self.db.log("poll", f"pages={result.pages} scanned={result.scanned} new={len(result.new)}"
                                 f"{' bootstrap' if result.bootstrap else ''}")
             if not result.bootstrap:
-                await self._alert(result.new)
+                await alert(self.settings, self.db, self.rules, self.pusher, result.new)
         except DartLimitReached as e:
             self.db.set("dart_status", f"호출 한도 도달 ({e}) - 내일 다시 시작")
             self.db.log("error", str(e))
-        except (DartError, Exception) as e:  # noqa: BLE001 - 루프가 죽지 않게 모두 기록
+        except Exception as e:  # noqa: BLE001 - 루프가 죽지 않게 모두 기록
             fails = int(self.db.get("dart_fail_count", "0") or 0) + 1
             self.db.set("dart_fail_count", str(fails))
             self.db.set("dart_status", f"오류 {fails}회 연속: {e}")
             self.db.log("error", f"poll: {e!r}")
             log.exception("poll failed")
 
-    async def _alert(self, rows: list[dict]) -> None:
-        for row in rows:
-            c_alert = row["level"] == RED and not row["is_correction"]
-            if not c_alert or not self.settings.notify_enabled:
-                continue
-            payload = payload_for(row, self.settings.public_url)
-            for user_id in recipients(self.db, self.rules, row):
-                sent = await asyncio.to_thread(self.pusher.send_to_user, user_id, payload)
-                self.db.log("alert", f"{row['rcept_no']} -> user {user_id} ({sent} devices)")
+
+async def alert(settings: Settings, db: Database, rules: Rules, pusher: Pusher, rows: list[dict]) -> None:
+    if not settings.notify_enabled:
+        return
+    for row in rows:
+        if row["level"] != RED or row["is_correction"]:
+            continue
+        payload = payload_for(row, settings.public_url)
+        for user_id in recipients(db, rules, row):
+            sent = await asyncio.to_thread(pusher.send_to_user, user_id, payload)
+            db.log("alert", f"{row['rcept_no']} -> user {user_id} ({sent} devices)")
 
 
-def create_app(settings: Settings, db: Database | None = None, start_poller: bool = True) -> FastAPI:
+async def alio_loop(settings: Settings, db: Database, rules: Rules, pusher: Pusher, collector: AlioCollector):
+    while True:
+        try:
+            new = await collector.poll()
+            db.set("alio_status", "정상")
+            db.log("alio", f"new={len(new)}")
+            await alert(settings, db, rules, pusher, new)
+        except Exception as e:  # noqa: BLE001
+            hint = " (SSL 오류면 .env 에 ALIO_VERIFY_SSL=false)" if "SSL" in repr(e) or "certificate" in repr(e) else ""
+            db.set("alio_status", f"오류: {e}{hint}")
+            db.log("error", f"alio: {e!r}")
+            log.exception("alio poll failed")
+        await asyncio.sleep(settings.alio_poll_hours * 3600)
+
+
+async def mail_loop(settings: Settings, db: Database, vault: mail.Vault):
+    while True:
+        await asyncio.to_thread(mail.poll_all, db, vault)
+        await asyncio.sleep(settings.mail_poll_minutes * 60)
+
+
+async def digest_loop(settings: Settings, db: Database, llm: LLM):
+    while True:
+        t = now()
+        for hhmm in settings.digest_times:
+            h, m = (int(x) for x in hhmm.split(":"))
+            due = t.replace(hour=h, minute=m, second=0, microsecond=0)
+            slot = due.strftime("%Y-%m-%d ") + hhmm
+            if due <= t < due + timedelta(minutes=30) and not db.one("SELECT 1 FROM briefings WHERE slot=?", (slot,)):
+                prev = db.one("SELECT created_at FROM briefings ORDER BY id DESC LIMIT 1")
+                since = prev["created_at"] if prev else (t - timedelta(hours=12)).isoformat(timespec="seconds")
+                await asyncio.to_thread(qa.make_digest, db, llm, slot, since)
+        await asyncio.sleep(60)
+
+
+# --- 앱 ---------------------------------------------------------------------
+def create_app(settings: Settings, db: Database | None = None, start_poller: bool = True,
+               llm: LLM | None = None) -> FastAPI:
     db = db or Database(settings.db_path)
     rules = Rules.load(settings.rules_path)
     pusher = Pusher(db, settings.data_dir, settings.vapid_contact, settings.notify_enabled)
     limiter = auth.LoginLimiter()
     poller = Poller(settings, db, rules, pusher)
+    llm = llm or LLM(settings, db)
+    vault = mail.Vault(settings.data_dir)
+    alio_cfg = AlioConfig.load(settings.alio_path) if settings.alio_path.exists() else AlioConfig()
+    alio_client = AlioClient(verify=settings.alio_verify_ssl)
+    alio_collector = AlioCollector(alio_client, db, alio_cfg)
+    articles = ArticleCollector(db, settings.docdoc_base)
+    jobs: dict[str, asyncio.Task] = {}
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        task = asyncio.create_task(poller.run_forever()) if start_poller else None
+        tasks = []
+        if start_poller:
+            tasks.append(asyncio.create_task(poller.run_forever()))
+            tasks.append(asyncio.create_task(digest_loop(settings, db, llm)))
+            if settings.alio_enabled:
+                tasks.append(asyncio.create_task(alio_loop(settings, db, rules, pusher, alio_collector)))
+            if settings.mail_enabled:
+                tasks.append(asyncio.create_task(mail_loop(settings, db, vault)))
         yield
-        if task:
-            task.cancel()
+        for t in tasks + list(jobs.values()):
+            t.cancel()
 
     app = FastAPI(title="청년의사 브리핑", lifespan=lifespan, docs_url=None, redoc_url=None)
     app.state.db, app.state.settings, app.state.poller, app.state.pusher = db, settings, poller, pusher
+    app.state.llm, app.state.alio = llm, alio_collector
 
     @app.middleware("http")
     async def security_headers(request: Request, call_next):
@@ -1030,12 +2718,17 @@ def create_app(settings: Settings, db: Database | None = None, start_poller: boo
         )
         return resp
 
+    @app.exception_handler(LLMError)
+    async def llm_error(_: Request, exc: LLMError):
+        return JSONResponse({"detail": str(exc)}, status_code=400)
+
     # --- 인증 -----------------------------------------------------------
     def current_user(request: Request) -> dict:
         user = auth.session_user(db, request.cookies.get(COOKIE))
         if not user:
             raise HTTPException(401, "로그인이 필요합니다.")
-        return user
+        full = db.one("SELECT reporter_id, monthly_limit_krw FROM users WHERE id=?", (user["id"],))
+        return {**user, **(full or {})}
 
     def admin_user(user: dict = Depends(current_user)) -> dict:
         if user["role"] != "admin":
@@ -1082,26 +2775,45 @@ def create_app(settings: Settings, db: Database | None = None, start_poller: boo
     def me(user: dict = Depends(current_user)):
         subs = db.query("SELECT kind, value FROM subscriptions WHERE user_id=? ORDER BY kind, value", (user["id"],))
         devices = db.one("SELECT COUNT(*) n FROM push_subs WHERE user_id=?", (user["id"],))["n"]
-        return {**user, "subscriptions": subs, "push_devices": devices, "alert_mode": settings.alert_mode}
+        articles_n = db.one("SELECT COUNT(*) n FROM articles WHERE author_id=?",
+                            ((user.get("reporter_id") or "").lower(),))["n"]
+        sb = db.one("SELECT updated_at, source_count FROM stylebooks WHERE user_id=?", (user["id"],))
+        acc = db.one("SELECT host, username, folder, enabled, last_error, updated_at FROM mail_accounts WHERE user_id=?",
+                     (user["id"],))
+        return {**user, "subscriptions": subs, "push_devices": devices, "alert_mode": settings.alert_mode,
+                "llm_ready": llm.available, "llm_provider": settings.llm_provider,
+                "mail_enabled": settings.mail_enabled, "mail_account": acc,
+                "my_articles": articles_n, "stylebook": sb,
+                "spent_krw": round(llm.month_spent(user["id"])), "limit_krw": llm.limit_for(user["id"])}
+
+    @app.post("/api/me/reporter")
+    def set_reporter(body: ReporterIn, user: dict = Depends(current_user)):
+        db.execute("UPDATE users SET reporter_id=? WHERE id=?", (body.reporter_id.lower(), user["id"]))
+        return {"ok": True}
 
     # --- 피드 -----------------------------------------------------------
     def _decorate(rows: list[dict]) -> list[dict]:
         for r in rows:
-            r["url"] = VIEW_URL.format(rcept_no=r["rcept_no"])
+            r["url"] = r.get("link") or VIEW_URL.format(rcept_no=r["rcept_no"])
         return rows
+
+    FEED_SELECT = """SELECT d.*, c.user_id AS claimed_by, u.display_name AS claimed_name, c.written_url, c.written_at
+                     FROM disclosures d LEFT JOIN claims c ON c.rcept_no=d.rcept_no
+                     LEFT JOIN users u ON u.id=c.user_id"""
 
     @app.get("/api/feed")
     def feed(level: str = "", q: str = "", watched: int = 0, mine: int = 0, include_gray: int = 0,
-             before: str = "", limit: int = 50, user: dict = Depends(current_user)):
-        sql = ["""SELECT d.*, c.user_id AS claimed_by, u.display_name AS claimed_name
-                  FROM disclosures d LEFT JOIN claims c ON c.rcept_no=d.rcept_no
-                  LEFT JOIN users u ON u.id=c.user_id WHERE 1=1"""]
+             source: str = "", before: str = "", limit: int = 50, user: dict = Depends(current_user)):
+        sql = [FEED_SELECT, "WHERE 1=1"]
         params: list = []
         if level in ("red", "yellow", "gray"):
             sql.append("AND d.level=?")
             params.append(level)
         elif not include_gray:
             sql.append("AND d.level!='gray'")
+        if source in ("dart", "alio"):
+            sql.append("AND d.source=?")
+            params.append(source)
         if q:
             sql.append("AND (d.corp_name LIKE ? OR d.report_nm LIKE ?)")
             params += [f"%{q}%", f"%{q}%"]
@@ -1122,32 +2834,39 @@ def create_app(settings: Settings, db: Database | None = None, start_poller: boo
         since = now().replace(hour=0, minute=0, second=0, microsecond=0).isoformat(timespec="seconds")
         counts = {r["level"]: r["n"] for r in db.query(
             "SELECT level, COUNT(*) n FROM disclosures WHERE first_seen_at >= ? GROUP BY level", (since,))}
-        top = _decorate(db.query(
-            """SELECT d.*, c.user_id AS claimed_by, u.display_name AS claimed_name FROM disclosures d
-               LEFT JOIN claims c ON c.rcept_no=d.rcept_no LEFT JOIN users u ON u.id=c.user_id
-               WHERE d.first_seen_at >= ? AND d.level='red' AND d.is_correction=0
-               ORDER BY d.watched DESC, d.first_seen_at DESC LIMIT 5""", (since,)))
-        unclaimed = sum(1 for t in top if not t["claimed_by"])
+        top = _decorate(db.query(FEED_SELECT + """ WHERE d.first_seen_at >= ? AND d.level='red' AND d.is_correction=0
+                                                   ORDER BY d.watched DESC, d.first_seen_at DESC LIMIT 5""", (since,)))
         mine = db.one("SELECT COUNT(*) n FROM claims WHERE user_id=? AND claimed_at >= ?", (user["id"], since))["n"]
+        mails_today = db.one("SELECT COUNT(*) n FROM mails WHERE user_id=? AND first_seen_at >= ?",
+                             (user["id"], since))["n"] if settings.mail_enabled else None
+        brief = db.one("SELECT slot, content, model, created_at FROM briefings ORDER BY id DESC LIMIT 1")
         return {
             "date": now().strftime("%Y-%m-%d"),
             "red": counts.get("red", 0), "yellow": counts.get("yellow", 0), "gray": counts.get("gray", 0),
-            "top": top, "unclaimed_top": unclaimed, "my_claims": mine,
+            "top": top, "unclaimed_top": sum(1 for t in top if not t["claimed_by"]), "my_claims": mine,
+            "mails_today": mails_today, "briefing": brief,
             "last_poll_at": db.get("last_poll_at"), "dart_status": db.get("dart_status", "대기 중"),
+            "alio_status": db.get("alio_status", "대기 중") if settings.alio_enabled else "꺼짐",
             "alert_mode": settings.alert_mode,
         }
 
-    @app.get("/api/disclosures/{rcept_no}")
+    @app.get("/api/disclosures/{rcept_no:path}")
     def disclosure(rcept_no: str, user: dict = Depends(current_user)):
-        rows = _decorate(db.query(
-            """SELECT d.*, c.user_id AS claimed_by, u.display_name AS claimed_name, c.claimed_at FROM disclosures d
-               LEFT JOIN claims c ON c.rcept_no=d.rcept_no LEFT JOIN users u ON u.id=c.user_id
-               WHERE d.rcept_no=?""", (rcept_no,)))
+        rows = _decorate(db.query(FEED_SELECT.replace("c.written_at", "c.written_at, c.claimed_at")
+                                  + " WHERE d.rcept_no=?", (rcept_no,)))
         if not rows:
             raise HTTPException(404, "없는 공시입니다.")
         return rows[0]
 
-    @app.post("/api/claims/{rcept_no}")
+    @app.post("/api/claims/{rcept_no:path}/written")
+    def mark_written(rcept_no: str, body: WrittenIn, user: dict = Depends(current_user)):
+        n = db.execute("UPDATE claims SET written_url=?, written_at=? WHERE rcept_no=? AND user_id=?",
+                       (body.url.strip() or None, now_iso(), rcept_no, user["id"]))
+        if not n:
+            raise HTTPException(400, "먼저 '내가 쓸게요'로 맡아 주세요.")
+        return {"ok": True}
+
+    @app.post("/api/claims/{rcept_no:path}")
     def claim(rcept_no: str, user: dict = Depends(current_user)):
         with db.tx() as c:
             if not c.execute("SELECT 1 FROM disclosures WHERE rcept_no=?", (rcept_no,)).fetchone():
@@ -1160,9 +2879,190 @@ def create_app(settings: Settings, db: Database | None = None, start_poller: boo
                       (rcept_no, user["id"], now_iso()))
         return {"ok": True}
 
-    @app.delete("/api/claims/{rcept_no}")
+    @app.delete("/api/claims/{rcept_no:path}")
     def unclaim(rcept_no: str, user: dict = Depends(current_user)):
         db.execute("DELETE FROM claims WHERE rcept_no=? AND user_id=?", (rcept_no, user["id"]))
+        return {"ok": True}
+
+    # --- 질문 -----------------------------------------------------------
+    @app.post("/api/ask")
+    async def ask(body: AskIn, user: dict = Depends(current_user)):
+        loop = asyncio.get_running_loop()
+        return await asyncio.to_thread(qa.ask, settings, db, llm, user, body.question.strip(),
+                                       poller.client if settings.dart_api_key else None, loop)
+
+    @app.get("/api/chats")
+    def chats(user: dict = Depends(current_user)):
+        rows = db.query("SELECT id, question, answer, trace_json, model, created_at FROM chats WHERE user_id=? "
+                        "ORDER BY id DESC LIMIT 30", (user["id"],))
+        for r in rows:
+            r["trace"] = [{"tool": t["tool"], "input": t["input"]} for t in json.loads(r.pop("trace_json"))]
+        return {"items": rows}
+
+    # --- 초안 -----------------------------------------------------------
+    @app.post("/api/drafts")
+    async def create_draft(body: DraftIn, user: dict = Depends(current_user)):
+        title, text, ref = body.title.strip(), body.text.strip(), body.source_ref
+        if body.source_kind == "disclosure":
+            d = db.one("SELECT * FROM disclosures WHERE rcept_no=?", (ref or "",))
+            if not d:
+                raise HTTPException(404, "없는 공시입니다.")
+            title = f"{d['corp_name']} {d['report_nm']}"
+            meta = f"회사/기관: {d['corp_name']}\n공시 제목: {d['report_nm']}\n접수일: {d['rcept_dt']}\n"
+            doc = ""
+            try:
+                if d.get("source", "dart") == "dart" and settings.dart_api_key:
+                    doc = await poller.client.document_text(d["rcept_no"])
+                elif d.get("source") == "alio" and d.get("link") and "disclosureNo=" in d["link"]:
+                    html = await alio_client.report_html(d["link"].split("disclosureNo=")[1])
+                    doc = "\n".join(" | ".join(r) for t in parse_tables(html) for r in t)[:15000]
+            except Exception as e:  # noqa: BLE001
+                db.log("error", f"draft source {ref}: {e!r}")
+            if not doc and not text:
+                raise HTTPException(400, "공시 원문을 가져오지 못했어요(DART 키·연결 확인). 보도자료나 메모를 붙여 넣으면 함께 씁니다.")
+            text = meta + (f"\n원문:\n{doc}" if doc else "") + (f"\n\n기자 메모:\n{text}" if text else "")
+        elif body.source_kind == "mail":
+            m = db.one("SELECT * FROM mails WHERE id=? AND user_id=?", (int(ref or 0), user["id"]))
+            if not m:
+                raise HTTPException(404, "없는 메일입니다.")
+            if not settings.mail_ai_summary:
+                raise HTTPException(400, "메일 본문을 AI로 보내는 기능은 법무 검토 후 관리자가 켭니다.")
+            title, text = m["subject"], f"보낸 사람: {m['sender']}\n{m['body']}"
+        if not title:
+            title = text.split("\n", 1)[0][:80]
+        return await asyncio.to_thread(writing.make_draft, db, llm, user, body.source_kind, ref, title, text, body.kind)
+
+    @app.get("/api/drafts")
+    def drafts(user: dict = Depends(current_user)):
+        return {"items": db.query("SELECT id, source_kind, source_ref, source_title, model, created_at FROM drafts "
+                                  "WHERE user_id=? ORDER BY id DESC LIMIT 50", (user["id"],))}
+
+    @app.get("/api/drafts/{draft_id}")
+    def draft(draft_id: int, user: dict = Depends(current_user)):
+        d = db.one("SELECT * FROM drafts WHERE id=? AND user_id=?", (draft_id, user["id"]))
+        if not d:
+            raise HTTPException(404, "없는 초안입니다.")
+        d["checks"] = json.loads(d.pop("checks_json"))
+        d["examples"] = json.loads(d.pop("examples_json"))
+        return d
+
+    # --- 스타일북·자사 기사 ------------------------------------------------
+    @app.get("/api/stylebook")
+    def get_stylebook(user: dict = Depends(current_user)):
+        return db.one("SELECT content, source_count, model, updated_at FROM stylebooks WHERE user_id=?",
+                      (user["id"],)) or {"content": "", "source_count": 0}
+
+    @app.put("/api/stylebook")
+    def put_stylebook(body: StylebookIn, user: dict = Depends(current_user)):
+        db.execute("""INSERT INTO stylebooks(user_id, content, source_count, model, updated_at) VALUES(?,?,0,'직접 수정',?)
+                      ON CONFLICT(user_id) DO UPDATE SET content=excluded.content, model='직접 수정',
+                      updated_at=excluded.updated_at""", (user["id"], body.content, now_iso()))
+        return {"ok": True}
+
+    @app.post("/api/stylebook/build")
+    async def build_stylebook(user: dict = Depends(current_user)):
+        return await asyncio.to_thread(writing.build_stylebook, db, llm, user)
+
+    @app.post("/api/articles/collect")
+    async def collect_articles(user: dict = Depends(current_user)):
+        rid = (user.get("reporter_id") or "").strip()
+        if not rid:
+            raise HTTPException(400, "설정에서 기자 ID(이메일 앞부분)를 먼저 입력해 주세요.")
+        key = f"articles:{user['id']}"
+        if key in jobs and not jobs[key].done():
+            return {"started": False, "message": "이미 가져오는 중이에요."}
+
+        async def job():
+            db.set(key, json.dumps({"state": "running", "added": 0, "checked": 0, "at": now_iso()}))
+            try:
+                res = await articles.collect_reporter(
+                    rid, progress=lambda p, a, c: db.set(key, json.dumps(
+                        {"state": "running", "page": p, "added": a, "checked": c, "at": now_iso()})))
+                db.set(key, json.dumps({"state": "done", **res, "at": now_iso()}))
+            except Exception as e:  # noqa: BLE001
+                db.set(key, json.dumps({"state": "error", "error": str(e)[:300], "at": now_iso()}))
+                db.log("error", f"articles {rid}: {e!r}")
+
+        jobs[key] = asyncio.create_task(job())
+        return {"started": True}
+
+    @app.get("/api/articles/status")
+    def articles_status(user: dict = Depends(current_user)):
+        raw = db.get(f"articles:{user['id']}")
+        n = db.one("SELECT COUNT(*) n FROM articles WHERE author_id=?", ((user.get("reporter_id") or "").lower(),))["n"]
+        return {"job": json.loads(raw) if raw else None, "count": n}
+
+    # --- 알리오 ---------------------------------------------------------
+    @app.get("/api/alio")
+    def alio_view(user: dict = Depends(current_user)):
+        return {
+            "enabled": settings.alio_enabled, "status": db.get("alio_status", "대기 중"),
+            "last_poll_at": db.get("alio_last_poll_at"),
+            "orgs": db.query("SELECT apba_id, name, inst_type, dept FROM alio_orgs ORDER BY name"),
+            "missing": json.loads(db.get("alio_missing", "[]") or "[]"),
+            "finance": finance_overview(db),
+        }
+
+    # --- 메일 -----------------------------------------------------------
+    def _mail_on():
+        if not settings.mail_enabled:
+            raise HTTPException(400, "메일 기능은 법무·IT 검토 후 관리자가 켭니다 (.env 의 MAIL_ENABLED).")
+
+    @app.get("/api/mail")
+    def mails(q: str = "", user: dict = Depends(current_user)):
+        _mail_on()
+        sql = "SELECT id, sender, subject, sent_at, embargo, summary, first_seen_at FROM mails WHERE user_id=?"
+        params: list = [user["id"]]
+        if q:
+            sql += " AND (subject LIKE ? OR sender LIKE ?)"
+            params += [f"%{q}%", f"%{q}%"]
+        return {"items": db.query(sql + " ORDER BY first_seen_at DESC LIMIT 100", tuple(params))}
+
+    @app.get("/api/mail/{mail_id}")
+    def mail_one(mail_id: int, user: dict = Depends(current_user)):
+        _mail_on()
+        m = db.one("SELECT * FROM mails WHERE id=? AND user_id=?", (mail_id, user["id"]))
+        if not m:
+            raise HTTPException(404, "없는 메일입니다.")
+        return m
+
+    @app.put("/api/mail/account")
+    async def mail_account(body: MailAccountIn, user: dict = Depends(current_user)):
+        _mail_on()
+        acc = {"user_id": user["id"], "host": body.host.strip(), "username": body.username.strip(),
+               "secret_enc": vault.seal(body.password), "folder": body.folder.strip(), "last_uid": 0,
+               "updated_at": now_iso()}
+        try:  # 저장 전에 접속 확인
+            await asyncio.to_thread(_probe_mail, acc)
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(400, f"메일 접속 실패: {e}") from e
+        db.execute("""INSERT INTO mail_accounts(user_id, host, username, secret_enc, folder, enabled, last_uid, updated_at)
+                      VALUES(:user_id,:host,:username,:secret_enc,:folder,1,0,:updated_at)
+                      ON CONFLICT(user_id) DO UPDATE SET host=excluded.host, username=excluded.username,
+                      secret_enc=excluded.secret_enc, folder=excluded.folder, enabled=1, last_uid=0,
+                      last_error=NULL, updated_at=excluded.updated_at""", acc)
+        asyncio.create_task(asyncio.to_thread(mail.poll_all, db, vault))
+        return {"ok": True}
+
+    def _probe_mail(acc: dict) -> None:
+        import imaplib
+
+        imap = imaplib.IMAP4_SSL(acc["host"])
+        try:
+            imap.login(acc["username"], vault.open(acc["secret_enc"]))
+            status, _ = imap.select(f'"{acc["folder"]}"', readonly=True)
+            if status != "OK":
+                raise RuntimeError(f"메일함 '{acc['folder']}'이 없습니다")
+        finally:
+            try:
+                imap.logout()
+            except Exception:  # noqa: BLE001
+                pass
+
+    @app.delete("/api/mail/account")
+    def mail_disconnect(user: dict = Depends(current_user)):
+        db.execute("DELETE FROM mail_accounts WHERE user_id=?", (user["id"],))
+        db.execute("DELETE FROM mails WHERE user_id=?", (user["id"],))
         return {"ok": True}
 
     # --- 구독·푸시 -------------------------------------------------------
@@ -1202,7 +3102,12 @@ def create_app(settings: Settings, db: Database | None = None, start_poller: boo
     # --- 관리자 ---------------------------------------------------------
     @app.get("/api/admin/users")
     def admin_users(user: dict = Depends(admin_user)):
-        return {"users": db.query("SELECT id, username, display_name, role, active, created_at FROM users ORDER BY id")}
+        rows = db.query("SELECT id, username, display_name, role, active, reporter_id, monthly_limit_krw, created_at "
+                        "FROM users ORDER BY id")
+        for r in rows:
+            r["spent_krw"] = round(llm.month_spent(r["id"]))
+            r["limit_krw"] = llm.limit_for(r["id"])
+        return {"users": rows}
 
     @app.post("/api/admin/invites")
     def admin_invite(body: InviteIn, user: dict = Depends(admin_user)):
@@ -1218,22 +3123,55 @@ def create_app(settings: Settings, db: Database | None = None, start_poller: boo
             db.execute("DELETE FROM sessions WHERE user_id=?", (user_id,))
         return {"ok": True}
 
+    @app.post("/api/admin/users/{user_id}/limit")
+    def admin_limit(user_id: int, body: LimitIn, user: dict = Depends(admin_user)):
+        db.execute("UPDATE users SET monthly_limit_krw=? WHERE id=?", (body.krw, user_id))
+        return {"ok": True}
+
     @app.get("/api/admin/status")
     def admin_status(user: dict = Depends(admin_user)):
         return {
             "dart_status": db.get("dart_status", "대기 중"),
             "last_poll_at": db.get("last_poll_at"),
             "dart_calls_today": poller.client.calls_today(),
+            "alio_status": db.get("alio_status", "대기 중") if settings.alio_enabled else "꺼짐",
+            "alio_last_poll_at": db.get("alio_last_poll_at"),
+            "llm": f"{settings.llm_provider} (준비됨)" if llm.available else "키 없음",
+            "mail": "켜짐" if settings.mail_enabled else "꺼짐 (법무 검토 후)",
             "alert_mode": settings.alert_mode,
             "events": db.query("SELECT at, kind, detail FROM events ORDER BY id DESC LIMIT 50"),
         }
+
+    @app.get("/api/admin/metrics")
+    def admin_metrics(days: int = 30, user: dict = Depends(admin_user)):
+        since = (now() - timedelta(days=max(1, min(days, 365)))).isoformat(timespec="seconds")
+        per_user = db.query(
+            """SELECT u.id, u.display_name,
+                 (SELECT COUNT(*) FROM claims c WHERE c.user_id=u.id AND c.claimed_at>=?) claims,
+                 (SELECT COUNT(*) FROM claims c WHERE c.user_id=u.id AND c.written_at>=?) written,
+                 (SELECT COUNT(*) FROM chats h WHERE h.user_id=u.id AND h.created_at>=?) questions,
+                 (SELECT COUNT(*) FROM drafts d WHERE d.user_id=u.id AND d.created_at>=?) drafts,
+                 (SELECT COALESCE(SUM(cost_krw),0) FROM llm_usage l WHERE l.user_id=u.id AND l.at>=?) cost_krw
+               FROM users u WHERE u.active=1 ORDER BY u.id""", (since,) * 5)
+        totals = {
+            "disclosures": db.one("SELECT COUNT(*) n FROM disclosures WHERE first_seen_at>=?", (since,))["n"],
+            "red": db.one("SELECT COUNT(*) n FROM disclosures WHERE first_seen_at>=? AND level='red'", (since,))["n"],
+            "alerts": db.one("SELECT COUNT(*) n FROM events WHERE kind='alert' AND at>=?", (since,))["n"],
+            "poll_errors": db.one("SELECT COUNT(*) n FROM events WHERE kind='error' AND at>=?", (since,))["n"],
+            "polls": db.one("SELECT COUNT(*) n FROM events WHERE kind='poll' AND at>=?", (since,))["n"],
+            "cost_krw": round(db.one("SELECT COALESCE(SUM(cost_krw),0) s FROM llm_usage WHERE at>=?", (since,))["s"]),
+        }
+        expected = days * 86400 / settings.poll_interval_sec
+        totals["uptime_pct"] = round(min(100.0, totals["polls"] / expected * 100), 1) if settings.dart_api_key else None
+        for r in per_user:
+            r["cost_krw"] = round(r["cost_krw"])
+        return {"days": days, "totals": totals, "users": per_user}
 
     @app.get("/healthz")
     def healthz():
         """외부 감시 서비스용. 마지막 수집이 너무 오래되면 503."""
         last = db.get("last_poll_at")
         if settings.dart_api_key and last:
-            from datetime import datetime
             age = (now() - datetime.fromisoformat(last)).total_seconds()
             if age > settings.poll_interval_sec * 4:
                 return JSONResponse({"ok": False, "last_poll_at": last}, status_code=503)
@@ -1255,6 +3193,9 @@ def create_app(settings: Settings, db: Database | None = None, start_poller: boo
 
     app.mount("/static", StaticFiles(directory=STATIC), name="static")
     return app
+
+
+__all__ = ["create_app", "Poller", "KST"]
 ```
 
 ---
@@ -1396,6 +3337,10 @@ if __name__ == "__main__":
       <nav class="nav">
         <a href="#feed" data-view="feed" class="nav-item"><span aria-hidden="true">◎</span>피드</a>
         <a href="#mine" data-view="mine" class="nav-item"><span aria-hidden="true">✓</span>내가 맡은 건</a>
+        <a href="#ask" data-view="ask" class="nav-item"><span aria-hidden="true">?</span>질문</a>
+        <a href="#draft" data-view="draft" class="nav-item"><span aria-hidden="true">✎</span>기사 초안</a>
+        <a href="#mail" data-view="mail" class="nav-item"><span aria-hidden="true">✉</span>보도자료 메일</a>
+        <a href="#alio" data-view="alio" class="nav-item"><span aria-hidden="true">▤</span>알리오·결산</a>
         <a href="#settings" data-view="settings" class="nav-item"><span aria-hidden="true">⚙</span>내 설정</a>
         <a href="#admin" data-view="admin" class="nav-item admin-only" hidden><span aria-hidden="true">⌂</span>관리자</a>
       </nav>
@@ -1415,6 +3360,7 @@ if __name__ == "__main__":
         <button class="chip" data-level="red" aria-pressed="false"><span class="lv lv-red" aria-hidden="true">●</span>중요</button>
         <button class="chip" data-level="yellow" aria-pressed="false"><span class="lv lv-yellow" aria-hidden="true">●</span>일반</button>
         <button class="chip" data-watched="1" aria-pressed="false">★ 감시 기업</button>
+        <button class="chip" data-source="alio" aria-pressed="false">알리오</button>
       </div>
       <button id="push-btn" class="btn primary small" type="button" hidden>PC·폰 알림 켜기</button>
     </header>
@@ -1424,6 +3370,7 @@ if __name__ == "__main__":
       <section id="view-feed" class="view">
         <div id="mode-banner" class="banner" hidden></div>
         <div class="bento" id="briefing" aria-live="polite"></div>
+        <div id="digest" class="card digest" hidden></div>
         <div class="feed-head">
           <h2 id="feed-title">오늘의 피드</h2>
           <span class="muted small kbd-hint">J/K 이동 · Enter 열기 · C 담당 · / 검색</span>
@@ -1431,6 +3378,58 @@ if __name__ == "__main__":
         <ul id="feed" class="feed" role="listbox" aria-label="공시 목록"></ul>
         <button id="more-btn" class="btn ghost" type="button" hidden>더 보기</button>
         <p id="empty" class="empty" hidden></p>
+      </section>
+
+      <!-- 질문 -->
+      <section id="view-ask" class="view" hidden>
+        <h2>질문</h2>
+        <p class="muted small">수집된 공시·알리오 결산·과거 기사(메일 기능이 켜지면 내 보도자료 메일)에서 찾아 출처와 함께 답합니다. 답의 숫자는 꼭 원문으로 확인하세요.</p>
+        <div id="chat" class="chat" aria-live="polite"></div>
+      </section>
+
+      <!-- 기사 초안 -->
+      <section id="view-draft" class="view" hidden>
+        <h2>기사 초안</h2>
+        <div class="card stack">
+          <h3>원자료</h3>
+          <p id="draft-source" class="muted small">보도자료나 메모를 붙여 넣거나, 피드의 공시 상세에서 [기사 초안]을 누르세요.</p>
+          <form id="draft-form" class="stack">
+            <input name="title" placeholder="제목 (선택)" maxlength="200" aria-label="원자료 제목">
+            <textarea name="text" rows="8" placeholder="보도자료 본문, 취재 메모 등" aria-label="원자료 본문"></textarea>
+            <div class="row">
+              <select name="kind" aria-label="기사 유형"><option>스트레이트</option><option>해설</option><option>단신</option></select>
+              <button class="btn primary" type="submit">초안 쓰기</button>
+              <span id="draft-busy" class="muted small" hidden>쓰는 중… (30초~1분)</span>
+            </div>
+          </form>
+        </div>
+        <div id="draft-result" class="card stack" hidden>
+          <div class="row between"><h3>초안 <span class="badge fix">AI 작성 · 출고 전 검수</span></h3>
+            <button id="draft-copy" class="btn" type="button">복사</button></div>
+          <textarea id="draft-text" rows="16" aria-label="초안"></textarea>
+          <div id="draft-checks"></div>
+          <div id="draft-examples" class="muted small"></div>
+        </div>
+        <div class="card stack"><h3>지난 초안</h3><ul id="draft-list" class="plain-list"></ul></div>
+      </section>
+
+      <!-- 메일 -->
+      <section id="view-mail" class="view" hidden>
+        <h2>보도자료 메일</h2>
+        <p id="mail-off" class="banner" hidden>메일 기능은 개인정보 국외 이전 등 법무·IT 검토 후 관리자가 켭니다.</p>
+        <div id="mail-wrap" class="stack">
+          <p class="muted small">본인이 지정한 메일함만 읽기 전용으로 가져옵니다. 다른 사람은 볼 수 없습니다. 연결은 '내 설정'에서 합니다.</p>
+          <ul id="mail-list" class="feed"></ul>
+          <div id="mail-detail" class="card stack" hidden></div>
+        </div>
+      </section>
+
+      <!-- 알리오 -->
+      <section id="view-alio" class="view" hidden>
+        <h2>알리오 · 공공기관 결산</h2>
+        <p id="alio-status" class="muted small"></p>
+        <div id="alio-finance" class="stack"></div>
+        <div class="card stack"><h3>감시 기관</h3><p id="alio-orgs" class="small"></p><p id="alio-missing" class="error small"></p></div>
       </section>
 
       <!-- 설정 -->
@@ -1461,6 +3460,41 @@ if __name__ == "__main__":
           <p class="muted small">아이폰은 Safari 공유 버튼 → '홈 화면에 추가'로 설치한 뒤 그 앱에서 알림을 켜야 합니다.</p>
         </div>
         <div class="card stack">
+          <h3>내 기사와 스타일북</h3>
+          <p class="muted small">청년의사 기자 ID(이메일 @ 앞부분)를 넣고 내 기사를 가져오면, AI가 문체를 분석해 스타일북을 만듭니다. 스타일북은 직접 고칠 수 있고 초안에 쓰입니다.</p>
+          <form id="reporter-form" class="row">
+            <input name="reporter_id" placeholder="예: soo331" pattern="[A-Za-z0-9._-]{2,40}" aria-label="기자 ID" required>
+            <button class="btn" type="submit">저장</button>
+            <button id="articles-btn" class="btn" type="button">내 기사 가져오기</button>
+          </form>
+          <p id="articles-state" class="muted small"></p>
+          <div class="row"><button id="stylebook-build" class="btn primary" type="button">스타일북 만들기 (AI)</button>
+            <span id="stylebook-meta" class="muted small"></span></div>
+          <textarea id="stylebook" rows="10" placeholder="스타일북이 여기에 표시됩니다. 직접 써도 됩니다." aria-label="스타일북"></textarea>
+          <div class="row"><button id="stylebook-save" class="btn" type="button">스타일북 저장</button></div>
+        </div>
+        <div id="mail-settings" class="card stack">
+          <h3>보도자료 메일 연결</h3>
+          <p id="mail-account-state" class="muted small"></p>
+          <form id="mail-form" class="stack">
+            <div class="row">
+              <input name="host" value="imap.gmail.com" aria-label="IMAP 서버">
+              <input name="username" placeholder="메일 주소" aria-label="메일 주소" required>
+            </div>
+            <div class="row">
+              <input name="password" type="password" placeholder="앱 비밀번호" aria-label="앱 비밀번호" required autocomplete="off">
+              <input name="folder" value="보도자료" aria-label="메일함(라벨) 이름">
+              <button class="btn" type="submit">연결</button>
+              <button id="mail-disconnect" class="btn ghost" type="button">연결 해제</button>
+            </div>
+          </form>
+          <p class="muted small">Gmail은 2단계 인증을 켠 뒤 '앱 비밀번호'를 만들어 넣습니다. 비밀번호는 암호화해 저장하고, 지정한 라벨 하나만 읽습니다.</p>
+        </div>
+        <div class="card stack">
+          <h3>AI 사용량</h3>
+          <p id="usage" class="muted small"></p>
+        </div>
+        <div class="card stack">
           <h3>화면</h3>
           <label class="row">글자 크기
             <input id="font-size" type="range" min="14" max="20" step="1" aria-label="글자 크기">
@@ -1471,6 +3505,12 @@ if __name__ == "__main__":
       <!-- 관리자 -->
       <section id="view-admin" class="view" hidden>
         <h2>관리자</h2>
+        <div class="card stack">
+          <h3>시범사업 성과 (최근 30일)</h3>
+          <dl id="metrics-totals" class="kv"></dl>
+          <table class="table"><thead><tr><th>기자</th><th>담당</th><th>기사화</th><th>질문</th><th>초안</th><th>AI 비용</th></tr></thead>
+            <tbody id="metrics-users"></tbody></table>
+        </div>
         <div class="card stack">
           <h3>수집 상태</h3>
           <dl id="admin-status" class="kv"></dl>
@@ -1485,7 +3525,7 @@ if __name__ == "__main__":
         </div>
         <div class="card stack">
           <h3>사용자</h3>
-          <table class="table"><thead><tr><th>이름</th><th>아이디</th><th>권한</th><th>상태</th><th></th></tr></thead>
+          <table class="table"><thead><tr><th>이름</th><th>아이디</th><th>권한</th><th>이번 달 AI</th><th>상태</th><th></th></tr></thead>
             <tbody id="users"></tbody></table>
         </div>
         <div class="card stack">
@@ -1502,13 +3542,15 @@ if __name__ == "__main__":
 
     <!-- 질문창 (3~4주차에 연결) -->
     <form id="ask" class="ask" autocomplete="off">
-      <input id="ask-input" placeholder="질문하기 (Ctrl+K) · 예: 오늘 기술이전 공시 있어?" aria-label="질문">
+      <input id="ask-input" placeholder="질문하기 (Ctrl+K) · 예: 오늘 기술이전 공시 있어?" aria-label="질문" maxlength="2000">
       <button class="btn primary" type="submit">묻기</button>
     </form>
 
     <nav class="tabbar" aria-label="하단 메뉴">
       <a href="#feed" data-view="feed">피드</a>
       <a href="#mine" data-view="mine">담당</a>
+      <a href="#ask" data-view="ask">질문</a>
+      <a href="#draft" data-view="draft">초안</a>
       <a href="#settings" data-view="settings">설정</a>
       <a href="#admin" data-view="admin" class="admin-only" hidden>관리</a>
     </nav>
@@ -1538,7 +3580,8 @@ const LEVEL = {
 const state = {
   me: null,
   view: "feed",
-  filter: { level: "", watched: 0, q: "" },
+  filter: { level: "", watched: 0, q: "", source: "" },
+  draftSource: null,
   items: [],
   selected: -1,
   detail: null,
@@ -1599,6 +3642,7 @@ function badge(item) {
   const wrap = el("span", { class: "row", style: "gap:.25rem" });
   wrap.append(el("span", { class: `badge ${lv.cls}` }, el("span", { "aria-hidden": "true", text: lv.icon }), lv.label));
   if (item.is_correction) wrap.append(el("span", { class: "badge fix", text: "정정" }));
+  if (item.source === "alio") wrap.append(el("span", { class: "badge src", text: "알리오" }));
   return wrap;
 }
 
@@ -1654,7 +3698,7 @@ function setView(view) {
   $$(".view").forEach((v) => (v.hidden = v.id !== `view-${section}`));
   $$("[data-view]").forEach((a) => a.setAttribute("aria-current", a.dataset.view === view ? "page" : "false"));
   $(".topbar").hidden = section !== "feed";
-  $("#ask").hidden = section !== "feed";
+  $("#ask").hidden = !["feed", "ask"].includes(section);
   if (section === "feed") {
     $("#feed-title").textContent = view === "mine" ? "내가 맡은 건" : "오늘의 피드";
     $("#briefing").hidden = view === "mine";
@@ -1662,6 +3706,10 @@ function setView(view) {
   }
   if (view === "settings") renderSettings();
   if (view === "admin") renderAdmin();
+  if (view === "ask") renderChats();
+  if (view === "draft") renderDrafts();
+  if (view === "mail") renderMail();
+  if (view === "alio") renderAlio();
 }
 
 function route() {
@@ -1670,9 +3718,16 @@ function route() {
   if (!state.me) return;
   if (h.startsWith("d/")) {
     if (state.view !== "feed") setView("feed");
-    return openDetail(h.slice(2));
+    return openDetail(decodeURIComponent(h.slice(2)));
   }
-  setView(["feed", "mine", "settings", "admin"].includes(h) ? h : "feed");
+  if (h.startsWith("draft/")) {
+    const [kind, ...rest] = h.slice(6).split("/");
+    state.draftSource = { kind: kind === "m" ? "mail" : "disclosure", ref: decodeURIComponent(rest.join("/")) };
+    closeDetail();
+    return setView("draft");
+  }
+  if (h === "draft") state.draftSource = null; // 메뉴로 들어오면 붙여 넣기 모드
+  setView(["feed", "mine", "settings", "admin", "ask", "draft", "mail", "alio"].includes(h) ? h : "feed");
 }
 window.addEventListener("hashchange", route);
 
@@ -1694,6 +3749,12 @@ async function loadSummary() {
               t.claimed_name ? el("span", { class: "claimed small", text: `✓ ${t.claimed_name}` }) : null))))
         : el("p", { class: "muted small", text: "오늘은 아직 중요 공시가 없어요." })),
   );
+  const dg = $("#digest");
+  dg.hidden = !s.briefing || state.view === "mine";
+  if (s.briefing) {
+    dg.replaceChildren(el("div", { class: "label", text: `정기 브리핑 · ${s.briefing.slot}${s.briefing.model ? " · AI 요약" : ""}` }),
+      el("div", { text: s.briefing.content }));
+  }
   const banner = $("#mode-banner");
   banner.hidden = s.alert_mode !== "log";
   banner.textContent = "지금은 '기록만' 모드예요. 팝업 없이 수집하면서 알림량을 재고 있어요.";
@@ -1709,6 +3770,7 @@ function feedQuery(before = "") {
   const p = new URLSearchParams();
   if (state.filter.level) p.set("level", state.filter.level);
   if (state.filter.watched) p.set("watched", "1");
+  if (state.filter.source) p.set("source", state.filter.source);
   if (state.filter.q) p.set("q", state.filter.q);
   if (state.view === "mine") p.set("mine", "1");
   if (before) p.set("before", before);
@@ -1760,7 +3822,10 @@ function select(idx, open) {
 $("#more-btn").addEventListener("click", () => loadFeed(false));
 
 $$(".filters .chip").forEach((chip) => chip.addEventListener("click", () => {
-  if (chip.dataset.watched !== undefined) {
+  if (chip.dataset.source !== undefined) {
+    state.filter.source = state.filter.source ? "" : chip.dataset.source;
+    chip.setAttribute("aria-pressed", state.filter.source ? "true" : "false");
+  } else if (chip.dataset.watched !== undefined) {
     state.filter.watched = state.filter.watched ? 0 : 1;
     chip.setAttribute("aria-pressed", state.filter.watched ? "true" : "false");
   } else {
@@ -1785,24 +3850,35 @@ async function openDetail(rceptNo) {
   const idx = state.items.findIndex((i) => i.rcept_no === rceptNo);
   if (idx >= 0) select(idx, false);
   const mine = d.claimed_by === state.me.id;
+  const writtenBtn = mine
+    ? el("button", { class: "btn", type: "button", text: d.written_at ? "✓ 기사화 기록됨" : "기사 썼어요",
+        onclick: async () => {
+          const url = prompt("쓴 기사 주소가 있으면 붙여 넣으세요 (없으면 비워 두기)", d.written_url || "") ?? null;
+          if (url === null) return;
+          try { await api(`/api/claims/${encodeURIComponent(d.rcept_no)}/written`, { method: "POST", body: { url } });
+            toast("기사화로 기록했어요. 시범사업 성과에 반영됩니다."); openDetail(d.rcept_no); } catch (err) { toast(err.message); }
+        } })
+    : null;
   const claimBtn = d.claimed_by && !mine
     ? el("button", { class: "btn", type: "button", disabled: true, text: `${d.claimed_name} 기자가 맡음` })
     : el("button", { class: mine ? "btn" : "btn primary", type: "button", onclick: toggleClaim, text: mine ? "맡기 취소" : "내가 쓸게요 (C)" });
   $("#detail .detail-inner").replaceChildren(
     el("div", { class: "row", style: "justify-content:space-between" }, badge(d),
       el("button", { class: "btn ghost small", type: "button", onclick: closeDetail, "aria-label": "닫기", text: "닫기 (Esc)" })),
-    el("div", {}, el("div", { class: "muted small", text: d.watched ? "★ 감시 기업" : "보건의료 업종" }), el("h2", { text: d.corp_name })),
+    el("div", {}, el("div", { class: "muted small", text: d.source === "alio" ? "알리오 · 공공기관" : d.watched ? "★ 감시 기업" : "보건의료 업종" }), el("h2", { text: d.corp_name })),
     el("p", { style: "margin:0;font-weight:600", text: d.report_nm }),
-    el("a", { class: "source", href: d.url, target: "_blank", rel: "noopener noreferrer" }, "DART 원문 열기", el("span", { "aria-hidden": "true", text: "↗" })),
+    el("a", { class: "source", href: d.url, target: "_blank", rel: "noopener noreferrer" }, d.source === "alio" ? "알리오 원문 열기" : "DART 원문 열기", el("span", { "aria-hidden": "true", text: "↗" })),
     el("dl", { class: "kv" },
       el("dt", { text: "접수일" }), el("dd", { text: fmtDate(d.rcept_dt) }),
       el("dt", { text: "접수번호" }), el("dd", { text: d.rcept_no }),
       el("dt", { text: "제출인" }), el("dd", { text: d.flr_nm || "-" }),
       el("dt", { text: "비고" }), el("dd", { text: d.rm || "-" }),
       el("dt", { text: "분류 근거" }), el("dd", { text: d.keyword ? `제목에 '${d.keyword}' 포함` : "키워드 없음 (일반)" }),
-      el("dt", { text: "처음 확인" }), el("dd", { text: fmtSeen(d.first_seen_at) + " · DART 공개는 제출 후 약 15분 뒤" })),
-    el("div", { class: "row" }, claimBtn,
-      el("button", { class: "btn", type: "button", disabled: true, title: "AI API 키 연결 후 5~6주차에 켜집니다", text: "기사 초안 (준비 중)" })),
+      el("dt", { text: "처음 확인" }), el("dd", { text: fmtSeen(d.first_seen_at) + (d.source === "alio" ? "" : " · DART 공개는 제출 후 약 15분 뒤") })),
+    el("div", { class: "row" }, claimBtn, writtenBtn,
+      el("button", { class: "btn", type: "button", text: "기사 초안",
+        title: state.me.llm_ready ? "이 공시로 초안 쓰기" : "AI API 키가 연결되면 켜집니다",
+        disabled: !state.me.llm_ready, onclick: () => (location.hash = `#draft/d/${encodeURIComponent(d.rcept_no)}`) })),
   );
   $("#detail").hidden = false;
   $("#app").classList.add("has-detail");
@@ -1832,7 +3908,7 @@ document.addEventListener("keydown", (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { e.preventDefault(); $("#ask-input").focus(); return; }
   const typing = ["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement?.tagName);
   if (e.key === "Escape") { if (typing) document.activeElement.blur(); else closeDetail(); return; }
-  if (typing || state.view === "settings" || state.view === "admin") return;
+  if (typing || !["feed", "mine"].includes(state.view)) return;
   if (e.key === "/") { e.preventDefault(); $("#search").focus(); }
   else if (e.key === "j") select(Math.min(state.selected + 1, state.items.length - 1), false);
   else if (e.key === "k") select(Math.max(state.selected - 1, 0), false);
@@ -1841,10 +3917,170 @@ document.addEventListener("keydown", (e) => {
 });
 
 // ---------- 질문창 ----------
-$("#ask").addEventListener("submit", (e) => {
+$("#ask").addEventListener("submit", async (e) => {
   e.preventDefault();
-  toast("질문 기능은 AI API 키를 연결한 뒤 켜집니다 (3~4주차).");
+  const input = $("#ask-input");
+  const q = input.value.trim();
+  if (!q) return;
+  if (!state.me.llm_ready) { toast("AI API 키가 연결되면 질문할 수 있어요."); return; }
+  if (state.view !== "ask") location.hash = "#ask";
+  input.value = "";
+  input.disabled = true;
+  const pending = el("div", { class: "bubble a", text: "자료를 찾아보는 중…" });
+  $("#chat").append(el("div", { class: "bubble q", text: q }), pending);
+  pending.scrollIntoView({ block: "end" });
+  try {
+    const r = await api("/api/ask", { method: "POST", body: { question: q } });
+    pending.replaceWith(answerBubble(r.answer, r.trace));
+  } catch (err) {
+    pending.textContent = err.message;
+  } finally {
+    input.disabled = false;
+    input.focus();
+  }
 });
+
+const TOOL_NAMES = { search_disclosures: "공시 검색", get_disclosure: "공시 원문", company_financials: "DART 재무",
+  alio_finance: "알리오 결산", search_newsroom_articles: "기사 검색", search_my_mail: "내 메일" };
+
+function linkify(text) {
+  // URL만 링크로 만들고 나머지는 글자 그대로 (innerHTML 사용 안 함)
+  const frag = document.createDocumentFragment();
+  let last = 0;
+  for (const m of text.matchAll(/https?:\/\/[^\s)\]>]+/g)) {
+    frag.append(text.slice(last, m.index));
+    frag.append(el("a", { href: m[0], target: "_blank", rel: "noopener noreferrer", text: m[0] }));
+    last = m.index + m[0].length;
+  }
+  frag.append(text.slice(last));
+  return frag;
+}
+
+function answerBubble(answer, trace = []) {
+  const b = el("div", { class: "bubble a" }, linkify(answer));
+  if (trace.length) b.append(el("div", { class: "tools", text: "찾아본 자료: " + [...new Set(trace.map((t) => TOOL_NAMES[t.tool] || t.tool))].join(", ") }));
+  return b;
+}
+
+async function renderChats() {
+  const box = $("#chat");
+  if (!state.me.llm_ready) {
+    box.replaceChildren(el("p", { class: "banner", text: "AI API 키가 아직 연결되지 않았어요. 관리자가 .env 에 키를 넣으면 질문할 수 있어요." }));
+    return;
+  }
+  const { items } = await api("/api/chats");
+  box.replaceChildren(...items.reverse().flatMap((c) => [el("div", { class: "bubble q", text: c.question }), answerBubble(c.answer, c.trace)]));
+  if (!items.length) box.append(el("p", { class: "muted", text: "예: \"이번 주 기술이전 공시 정리해줘\", \"서울대병원 작년 의료수익 전년 대비?\", \"유한양행 2025년 매출과 영업이익\"" }));
+  $("#ask-input").focus();
+}
+
+// ---------- 기사 초안 ----------
+async function renderDrafts() {
+  const src = state.draftSource;
+  const form = $("#draft-form");
+  if (src) {
+    let label = "";
+    if (src.kind === "disclosure") {
+      try { const d = await api(`/api/disclosures/${encodeURIComponent(src.ref)}`); label = `공시: ${d.corp_name} · ${d.report_nm}`; }
+      catch { label = "공시"; }
+      $("#draft-source").textContent = `${label} — 원문은 자동으로 가져옵니다. 취재 메모가 있으면 아래에 덧붙이세요.`;
+    } else {
+      $("#draft-source").textContent = "메일을 원자료로 씁니다.";
+    }
+    form.elements.namedItem("title").hidden = true;
+  } else {
+    $("#draft-source").textContent = "보도자료나 메모를 붙여 넣거나, 피드의 공시 상세에서 [기사 초안]을 누르세요.";
+    form.elements.namedItem("title").hidden = false;
+  }
+  const { items } = await api("/api/drafts");
+  $("#draft-list").replaceChildren(...items.map((d) => el("li", {},
+    el("button", { type: "button", onclick: () => showDraft(d.id) }, `${fmtSeen(d.created_at)} · ${d.source_title || "(제목 없음)"}`))));
+  if (!items.length) $("#draft-list").append(el("li", { class: "muted small", text: "아직 없어요." }));
+}
+
+function renderDraftResult(d) {
+  $("#draft-result").hidden = false;
+  $("#draft-text").value = d.draft;
+  const miss = d.checks.filter((c) => !c.found);
+  $("#draft-checks").replaceChildren(
+    el("p", { class: "small", text: miss.length ? `원자료에서 찾지 못한 숫자 ${miss.length}개 — 반드시 확인하세요.` : "초안의 숫자는 모두 원자료에 있어요." }),
+    el("ul", { class: "checks" }, d.checks.map((c) => el("li", { class: c.found ? "" : "miss", title: c.context, text: `${c.found ? "✓" : "✗"} ${c.number}` }))));
+  $("#draft-examples").textContent = d.examples?.length ? "참고한 내 기사: " + d.examples.map((e) => e.title).join(" / ") : "";
+  $("#draft-result").scrollIntoView({ block: "start" });
+}
+
+async function showDraft(id) {
+  try { renderDraftResult(await api(`/api/drafts/${id}`)); } catch (err) { toast(err.message); }
+}
+
+$("#draft-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (!state.me.llm_ready) { toast("AI API 키가 연결되면 초안을 쓸 수 있어요."); return; }
+  const f = new FormData(e.target);
+  const src = state.draftSource;
+  const body = src
+    ? { source_kind: src.kind, source_ref: src.ref, text: f.get("text") || "", kind: f.get("kind") }
+    : { source_kind: "text", title: f.get("title") || "", text: f.get("text") || "", kind: f.get("kind") };
+  $("#draft-busy").hidden = false;
+  e.target.querySelector("button[type=submit]").disabled = true;
+  try {
+    const d = await api("/api/drafts", { method: "POST", body });
+    renderDraftResult(d);
+    renderDrafts();
+  } catch (err) { toast(err.message); }
+  finally { $("#draft-busy").hidden = true; e.target.querySelector("button[type=submit]").disabled = false; }
+});
+$("#draft-copy").addEventListener("click", async () => {
+  try { await navigator.clipboard.writeText($("#draft-text").value); toast("초안을 복사했어요. 검수 후 CMS에 붙여 넣으세요."); }
+  catch { $("#draft-text").select(); toast("Ctrl+C로 복사하세요."); }
+});
+
+// ---------- 메일 ----------
+async function renderMail() {
+  const off = !state.me.mail_enabled;
+  $("#mail-off").hidden = !off;
+  $("#mail-wrap").hidden = off;
+  if (off) return;
+  const { items } = await api("/api/mail");
+  $("#mail-list").replaceChildren(...items.map((m) => el("li", { class: "item", onclick: () => openMail(m.id) },
+    el("span", { class: "badge yellow", text: "메일" }),
+    el("div", { style: "min-width:0" }, el("div", { class: "who", text: m.sender }), el("div", { class: "title", text: m.subject })),
+    el("div", { class: "meta" }, m.embargo ? el("span", { class: "mail-embargo", text: "엠바고" }) : null,
+      el("time", { text: fmtSeen(m.sent_at || m.first_seen_at) })))));
+  if (!items.length) $("#mail-list").append(el("li", { class: "empty", text: "가져온 메일이 없어요. '내 설정'에서 메일을 연결하세요." }));
+}
+
+async function openMail(id) {
+  const m = await api(`/api/mail/${id}`);
+  const box = $("#mail-detail");
+  box.hidden = false;
+  box.replaceChildren(
+    el("div", { class: "muted small", text: `${m.sender} · ${fmtSeen(m.sent_at)}` }), el("h3", { text: m.subject }),
+    m.embargo ? el("p", { class: "mail-embargo", text: m.embargo }) : null,
+    el("div", { class: "pre", text: m.body }),
+    el("div", { class: "row" }, el("button", { class: "btn", type: "button", text: "이 메일로 초안",
+      onclick: () => (location.hash = `#draft/m/${m.id}`) })));
+  box.scrollIntoView({ block: "start" });
+}
+
+// ---------- 알리오 ----------
+const won = (v) => (v == null ? "-" : Math.round(v).toLocaleString("ko-KR"));
+async function renderAlio() {
+  const a = await api("/api/alio");
+  $("#alio-status").textContent = a.enabled ? `상태: ${a.status}${a.last_poll_at ? " · 마지막 확인 " + fmtSeen(a.last_poll_at) : ""}` : "알리오 수집이 꺼져 있어요.";
+  $("#alio-orgs").textContent = a.orgs.length ? a.orgs.map((o) => o.name).join(", ") : "아직 기관 목록을 받지 못했어요.";
+  $("#alio-missing").textContent = a.missing.length ? `알리오에서 찾지 못한 이름: ${a.missing.join(", ")} (config/alio.toml 확인)` : "";
+  $("#alio-finance").replaceChildren(...(a.finance.length ? a.finance.map((f) => el("div", { class: "card stack" },
+    el("div", { class: "row between" }, el("h3", { text: f.org }),
+      el("a", { class: "source", href: f.url, target: "_blank", rel: "noopener noreferrer" }, "알리오 원문 ↗")),
+    el("div", { class: "muted small", text: `${f.title || ""} ${f.unit ? "· " + f.unit : ""}` }),
+    el("table", { class: "fin" }, el("thead", {}, el("tr", {}, ["항목", "올해", "전년", "증감", "증감률"].map((h) => el("th", { text: h })))),
+      el("tbody", {}, f.items.map((i) => el("tr", {},
+        el("td", { text: i.label + (i.year ? ` (${i.year})` : "") }), el("td", { text: won(i.value) }), el("td", { text: won(i.prev) }),
+        el("td", { class: i.change > 0 ? "up" : i.change < 0 ? "down" : "", text: i.change == null ? "-" : (i.change > 0 ? "+" : "") + won(i.change) }),
+        el("td", { class: i.pct > 0 ? "up" : i.pct < 0 ? "down" : "", text: i.pct == null ? "-" : `${i.pct > 0 ? "+" : ""}${i.pct}%` }))))))) :
+    [el("p", { class: "muted", text: "아직 수집된 결산이 없어요. 결산 공시가 올라오면(보통 3~4월) 전년 대비 표가 여기에 생깁니다." })]));
+}
 
 // ---------- 설정 ----------
 async function renderSettings() {
@@ -1858,7 +4094,68 @@ async function renderSettings() {
       } }))) : [el("span", { class: "muted small", text: "아직 없어요. 아래에서 추가하세요." })]));
   $("#push-state").textContent = `알림 받는 기기 ${me.push_devices}대 · 서버 알림 모드: ${me.alert_mode === "notify" ? "알림 보냄" : "기록만 (관리자가 켜면 알림 시작)"}`;
   $("#font-size").value = parseInt(getComputedStyle(document.documentElement).getPropertyValue("--fs")) || 15;
+  $("#reporter-form").reporter_id.value = me.reporter_id || "";
+  $("#articles-state").textContent = `가져온 내 기사 ${me.my_articles}편`;
+  $("#stylebook-meta").textContent = me.stylebook ? `마지막 수정 ${fmtSeen(me.stylebook.updated_at)} · 기사 ${me.stylebook.source_count}편 분석` : "아직 없음";
+  const sb = await api("/api/stylebook");
+  $("#stylebook").value = sb.content || "";
+  $("#stylebook-build").disabled = !me.llm_ready;
+  $("#mail-settings").hidden = !me.mail_enabled;
+  const acc = me.mail_account;
+  $("#mail-account-state").textContent = acc
+    ? `연결됨: ${acc.username} · 메일함 '${acc.folder}'${acc.last_error ? " · 오류: " + acc.last_error : ""}`
+    : "연결된 메일이 없어요.";
+  $("#usage").textContent = me.llm_ready
+    ? `이번 달 AI 사용 ${me.spent_krw.toLocaleString("ko-KR")}원 / 한도 ${me.limit_krw.toLocaleString("ko-KR")}원 (${me.llm_provider})`
+    : "AI API 키가 아직 연결되지 않았어요.";
+  pollArticles();
 }
+
+$("#reporter-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  try { await api("/api/me/reporter", { method: "POST", body: { reporter_id: e.target.reporter_id.value.trim() } });
+    toast("기자 ID를 저장했어요."); renderSettings(); } catch (err) { toast(err.message); }
+});
+let articlesTimer;
+async function pollArticles() {
+  clearTimeout(articlesTimer);
+  const st = await api("/api/articles/status");
+  const j = st.job;
+  let msg = `가져온 내 기사 ${st.count}편`;
+  if (j?.state === "running") msg += ` · 가져오는 중 (확인 ${j.checked || 0}건, 추가 ${j.added || 0}건)`;
+  else if (j?.state === "done") msg += ` · 마지막 가져오기 ${fmtSeen(j.at)} (추가 ${j.added}건)`;
+  else if (j?.state === "error") msg += ` · 오류: ${j.error}`;
+  $("#articles-state").textContent = msg;
+  if (j?.state === "running" && state.view === "settings") articlesTimer = setTimeout(pollArticles, 4000);
+}
+$("#articles-btn").addEventListener("click", async () => {
+  try { const r = await api("/api/articles/collect", { method: "POST" }); toast(r.started ? "내 기사를 가져오기 시작했어요. 몇 분 걸려요." : r.message); pollArticles(); }
+  catch (err) { toast(err.message); }
+});
+$("#stylebook-build").addEventListener("click", async (e) => {
+  e.target.disabled = true;
+  toast("스타일북을 만드는 중이에요. 1~2분 걸려요.");
+  try { const r = await api("/api/stylebook/build", { method: "POST" }); $("#stylebook").value = r.content; toast("스타일북을 만들었어요. 읽어 보고 고쳐 주세요."); renderSettings(); }
+  catch (err) { toast(err.message); }
+  finally { e.target.disabled = false; }
+});
+$("#stylebook-save").addEventListener("click", async () => {
+  try { await api("/api/stylebook", { method: "PUT", body: { content: $("#stylebook").value } }); toast("스타일북을 저장했어요."); }
+  catch (err) { toast(err.message); }
+});
+$("#mail-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const f = new FormData(e.target);
+  try {
+    await api("/api/mail/account", { method: "PUT", body: Object.fromEntries(f.entries()) });
+    e.target.password.value = "";
+    toast("메일을 연결했어요."); renderSettings();
+  } catch (err) { toast(err.message); }
+});
+$("#mail-disconnect").addEventListener("click", async () => {
+  if (!confirm("메일 연결을 해제하고 가져온 메일을 지울까요?")) return;
+  await api("/api/mail/account", { method: "DELETE" }); toast("연결을 해제했어요."); renderSettings();
+});
 
 $("#sub-form").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -1918,14 +4215,29 @@ async function checkPushButton() {
 
 // ---------- 관리자 ----------
 async function renderAdmin() {
-  const [st, us] = await Promise.all([api("/api/admin/status"), api("/api/admin/users")]);
+  const [st, us, mt] = await Promise.all([api("/api/admin/status"), api("/api/admin/users"), api("/api/admin/metrics")]);
+  const t = mt.totals;
+  $("#metrics-totals").replaceChildren(
+    el("dt", { text: "수집 공시" }), el("dd", { text: `${t.disclosures}건 (중요 ${t.red}건)` }),
+    el("dt", { text: "보낸 알림" }), el("dd", { text: `${t.alerts}건` }),
+    el("dt", { text: "수집 가동률" }), el("dd", { text: t.uptime_pct == null ? "DART 키 없음" : `${t.uptime_pct}% (오류 ${t.poll_errors}건)` }),
+    el("dt", { text: "AI 비용" }), el("dd", { text: `${t.cost_krw.toLocaleString("ko-KR")}원` }));
+  $("#metrics-users").replaceChildren(...mt.users.map((u) => el("tr", {},
+    el("td", { text: u.display_name }), el("td", { text: u.claims }), el("td", { text: u.written }),
+    el("td", { text: u.questions }), el("td", { text: u.drafts }), el("td", { text: `${u.cost_krw.toLocaleString("ko-KR")}원` }))));
   $("#admin-status").replaceChildren(
     el("dt", { text: "수집 상태" }), el("dd", { text: st.dart_status }),
     el("dt", { text: "마지막 수집" }), el("dd", { text: st.last_poll_at ? fmtSeen(st.last_poll_at) : "-" }),
     el("dt", { text: "오늘 DART 호출" }), el("dd", { text: `${st.dart_calls_today}건` }),
-    el("dt", { text: "알림 모드" }), el("dd", { text: st.alert_mode === "notify" ? "알림 보냄" : "기록만 (.env 의 ALERT_MODE=notify 로 변경)" }));
+    el("dt", { text: "알림 모드" }), el("dd", { text: st.alert_mode === "notify" ? "알림 보냄" : "기록만 (.env 의 ALERT_MODE=notify 로 변경)" }),
+    el("dt", { text: "알리오" }), el("dd", { text: st.alio_status }),
+    el("dt", { text: "AI" }), el("dd", { text: st.llm }),
+    el("dt", { text: "메일" }), el("dd", { text: st.mail }));
   $("#users").replaceChildren(...us.users.map((u) => el("tr", {},
     el("td", { text: u.display_name }), el("td", { text: u.username }), el("td", { text: u.role === "admin" ? "관리자" : "기자" }),
+    el("td", {}, `${u.spent_krw.toLocaleString("ko-KR")} / `,
+      el("input", { class: "limit-input", type: "number", min: "0", step: "1000", value: u.limit_krw, "aria-label": `${u.display_name} 월 한도(원)`,
+        onchange: async (e) => { await api(`/api/admin/users/${u.id}/limit`, { method: "POST", body: { krw: Number(e.target.value) } }); toast("한도를 바꿨어요."); } }), "원"),
     el("td", { text: u.active ? "사용 중" : "비활성" }),
     el("td", {}, u.id === state.me.id ? null : el("button", { class: "btn small", type: "button", text: u.active ? "비활성화" : "다시 사용",
       onclick: async () => { await api(`/api/admin/users/${u.id}/active?active=${u.active ? 0 : 1}`, { method: "POST" }); renderAdmin(); } })))));
@@ -2041,290 +4353,6 @@ self.addEventListener("notificationclick", (event) => {
 
 ---
 
-# [첨부] newsbot/static/app.css
-
-```css
-/* 청년의사 브리핑 — 2026 원칙: 요약 먼저, 출처는 한눈에, 알림은 절제, 밀도는 높게, 장식은 적게 */
-:root {
-  --brand: #0b4a8b;
-  --brand-ink: #ffffff;
-  --bg: #f6f7f9;
-  --surface: #ffffff;
-  --surface-2: #eef1f5;
-  --line: #dde2ea;
-  --text: #121822;
-  --text-2: #4d5866;
-  --red: #c62828;
-  --red-bg: #fdecec;
-  --yellow: #8a6100;
-  --yellow-bg: #fff4d6;
-  --gray: #6b7480;
-  --ok: #1d7a46;
-  --focus: #2f6fe0;
-  --radius: 12px;
-  --fs: 15px;
-  --shadow: 0 1px 2px rgba(16, 24, 40, .06), 0 4px 16px rgba(16, 24, 40, .06);
-  color-scheme: light;
-}
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --brand: #6ea8ff; --brand-ink: #0b1220;
-    --bg: #0d1117; --surface: #151b23; --surface-2: #1c2430; --line: #2a3442;
-    --text: #e8edf3; --text-2: #a3aebb;
-    --red: #ff7b72; --red-bg: #3a1618; --yellow: #f2c14e; --yellow-bg: #33290f; --gray: #8b96a3; --ok: #56d364;
-    --focus: #79b8ff; --shadow: none; color-scheme: dark;
-  }
-}
-:root[data-theme="dark"] {
-  --brand: #6ea8ff; --brand-ink: #0b1220;
-  --bg: #0d1117; --surface: #151b23; --surface-2: #1c2430; --line: #2a3442;
-  --text: #e8edf3; --text-2: #a3aebb;
-  --red: #ff7b72; --red-bg: #3a1618; --yellow: #f2c14e; --yellow-bg: #33290f; --gray: #8b96a3; --ok: #56d364;
-  --focus: #79b8ff; --shadow: none; color-scheme: dark;
-}
-
-* { box-sizing: border-box; }
-html { font-size: var(--fs); }
-body {
-  margin: 0; background: var(--bg); color: var(--text);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", sans-serif;
-  line-height: 1.5; -webkit-font-smoothing: antialiased; word-break: keep-all;
-}
-a { color: var(--brand); }
-h1, h2, h3 { margin: 0; line-height: 1.3; }
-h2 { font-size: 1.25rem; }
-h3 { font-size: 1rem; }
-button, input, select { font: inherit; color: inherit; }
-:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 6px; }
-[hidden] { display: none !important; }
-.muted { color: var(--text-2); }
-.small { font-size: .867rem; }
-.error { color: var(--red); min-height: 1.5em; margin: .5rem 0 0; }
-.skip { position: absolute; left: -999px; top: 8px; background: var(--surface); padding: 8px 12px; z-index: 99; }
-.skip:focus { left: 8px; }
-.stack { display: flex; flex-direction: column; gap: .75rem; }
-.row { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
-
-/* 버튼·입력 */
-.btn {
-  border: 1px solid var(--line); background: var(--surface); padding: .5rem .9rem; border-radius: 10px;
-  cursor: pointer; font-weight: 600; white-space: nowrap;
-}
-.btn:hover { background: var(--surface-2); }
-.btn.primary { background: var(--brand); color: var(--brand-ink); border-color: transparent; }
-.btn.primary:hover { filter: brightness(1.08); }
-.btn.ghost { background: transparent; border-color: transparent; color: var(--text-2); }
-.btn.small { padding: .35rem .7rem; font-size: .867rem; }
-input, select {
-  border: 1px solid var(--line); background: var(--surface); border-radius: 10px; padding: .55rem .75rem; min-width: 0;
-}
-label { display: flex; flex-direction: column; gap: .3rem; font-weight: 600; font-size: .933rem; }
-label.row { flex-direction: row; }
-
-/* 로그인 */
-.auth { min-height: 100vh; display: grid; place-items: center; padding: 16px; }
-.auth-card { width: min(400px, 100%); background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 28px; box-shadow: var(--shadow); }
-.auth-card h1 { font-size: 1.25rem; margin-top: 1rem; }
-.brand { display: flex; align-items: center; gap: .55rem; font-weight: 800; letter-spacing: -.01em; }
-.brand-mark {
-  display: inline-grid; place-items: center; width: 30px; height: 30px; border-radius: 8px;
-  background: #0b4a8b; color: #fff; font-weight: 800;
-}
-
-/* 앱 레이아웃: 고정 메뉴 | 본문 | 상세 */
-.shell {
-  display: grid; grid-template-columns: 216px minmax(0, 1fr); grid-template-rows: auto 1fr;
-  grid-template-areas: "side top" "side main"; min-height: 100vh;
-}
-.shell.has-detail { grid-template-columns: 216px minmax(0, 1fr) 400px; grid-template-areas: "side top detail" "side main detail"; }
-.sidebar {
-  grid-area: side; position: sticky; top: 0; height: 100vh; display: flex; flex-direction: column; gap: 1.25rem;
-  padding: 18px 14px; border-right: 1px solid var(--line); background: var(--surface);
-}
-.nav { display: flex; flex-direction: column; gap: 2px; }
-.nav-item { display: flex; gap: .6rem; align-items: center; padding: .55rem .7rem; border-radius: 10px; color: var(--text); text-decoration: none; font-weight: 600; }
-.nav-item span { width: 1.1em; text-align: center; color: var(--text-2); }
-.nav-item:hover { background: var(--surface-2); }
-.nav-item[aria-current="page"] { background: var(--surface-2); color: var(--brand); }
-.sidebar-foot { margin-top: auto; display: flex; flex-direction: column; gap: .4rem; align-items: flex-start; }
-.status { display: flex; align-items: center; gap: .45rem; font-size: .8rem; color: var(--text-2); }
-.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--gray); }
-.status.ok .dot { background: var(--ok); }
-.status.bad .dot { background: var(--red); }
-
-/* 상단바: 반투명은 여기만 (절제된 Liquid Glass) */
-.topbar {
-  grid-area: top; position: sticky; top: 0; z-index: 5; display: flex; gap: .75rem; align-items: center; flex-wrap: wrap;
-  padding: 12px 20px; background: color-mix(in srgb, var(--bg) 78%, transparent);
-  backdrop-filter: saturate(1.4) blur(14px); -webkit-backdrop-filter: saturate(1.4) blur(14px);
-  border-bottom: 1px solid var(--line);
-}
-.search { flex: 1 1 260px; }
-.search input { width: 100%; }
-.filters { display: flex; gap: .35rem; flex-wrap: wrap; }
-.chip {
-  border: 1px solid var(--line); background: var(--surface); border-radius: 999px; padding: .3rem .75rem;
-  cursor: pointer; font-size: .867rem; font-weight: 600; display: inline-flex; gap: .35rem; align-items: center;
-}
-.chip[aria-pressed="true"] { background: var(--text); color: var(--bg); border-color: var(--text); }
-.lv-red { color: var(--red); } .lv-yellow { color: var(--yellow); }
-
-.main { grid-area: main; padding: 20px 20px 120px; outline: none; min-width: 0; }
-.view { display: flex; flex-direction: column; gap: 16px; max-width: 1100px; }
-.banner { background: var(--surface-2); border: 1px dashed var(--line); padding: .6rem .9rem; border-radius: 10px; font-size: .9rem; color: var(--text-2); }
-
-/* 오늘의 브리핑: 벤토 그리드 */
-.bento { display: grid; gap: 12px; grid-template-columns: repeat(4, minmax(0, 1fr)); }
-.tile { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; box-shadow: var(--shadow); }
-.tile .label { font-size: .8rem; color: var(--text-2); font-weight: 600; }
-.tile .num { font-size: 1.9rem; font-weight: 800; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
-.tile.alert { border-color: color-mix(in srgb, var(--red) 40%, var(--line)); }
-.tile.alert .num { color: var(--red); }
-.tile.wide { grid-column: span 4; }
-.top-list { list-style: none; margin: .5rem 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
-.top-list li button { all: unset; cursor: pointer; display: flex; gap: .6rem; align-items: baseline; padding: .35rem .25rem; border-radius: 8px; width: 100%; box-sizing: border-box; }
-.top-list li button:hover { background: var(--surface-2); }
-.top-list strong, .top-list .claimed, .top-list .badge { flex: 0 0 auto; }
-.top-list .t { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.top-list li button:focus-visible { outline: 2px solid var(--focus); }
-
-/* 피드 */
-.feed-head { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; }
-.feed { list-style: none; margin: 0; padding: 0; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
-.item {
-  display: grid; grid-template-columns: 64px minmax(0, 1fr) auto; gap: .25rem .75rem; align-items: center;
-  padding: .7rem 1rem; border-bottom: 1px solid var(--line); cursor: pointer;
-}
-.item:last-child { border-bottom: 0; }
-.item:hover { background: var(--surface-2); }
-.item[aria-selected="true"] { background: color-mix(in srgb, var(--brand) 9%, var(--surface)); box-shadow: inset 3px 0 0 var(--brand); }
-.item.new { animation: fresh 2.4s ease-out; }
-@keyframes fresh { from { background: color-mix(in srgb, var(--brand) 18%, var(--surface)); } to { background: transparent; } }
-.badge {
-  display: inline-flex; align-items: center; justify-content: center; gap: .25rem; font-size: .75rem; font-weight: 700;
-  border-radius: 6px; padding: .15rem .4rem; white-space: nowrap;
-}
-.badge.red { background: var(--red-bg); color: var(--red); }
-.badge.yellow { background: var(--yellow-bg); color: var(--yellow); }
-.badge.gray { background: var(--surface-2); color: var(--gray); }
-.badge.fix { background: var(--surface-2); color: var(--text-2); }
-.item .who { font-weight: 700; }
-.item .title { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.item .meta { display: flex; gap: .5rem; align-items: center; color: var(--text-2); font-size: .8rem; justify-self: end; font-variant-numeric: tabular-nums; }
-.claimed { color: var(--ok); font-weight: 700; }
-.star { color: #d39b00; }
-.empty { text-align: center; color: var(--text-2); padding: 2rem; }
-.kbd-hint { white-space: nowrap; }
-
-/* 상세 */
-.detail { grid-area: detail; position: sticky; top: 0; height: 100vh; overflow: auto; border-left: 1px solid var(--line); background: var(--surface); }
-.detail-inner { padding: 20px; display: flex; flex-direction: column; gap: 14px; }
-.detail h2 { font-size: 1.15rem; }
-.source {
-  display: inline-flex; gap: .35rem; align-items: center; border: 1px solid var(--line); border-radius: 999px;
-  padding: .2rem .6rem; font-size: .8rem; text-decoration: none; color: var(--text-2); width: fit-content;
-}
-.kv { display: grid; grid-template-columns: max-content 1fr; gap: .35rem 1rem; margin: 0; font-size: .9rem; }
-.kv dt { color: var(--text-2); }
-.kv dd { margin: 0; }
-
-/* 카드·표 */
-.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; }
-.tags { display: flex; gap: .4rem; flex-wrap: wrap; }
-.tag { display: inline-flex; gap: .4rem; align-items: center; background: var(--surface-2); border-radius: 999px; padding: .25rem .4rem .25rem .75rem; font-size: .867rem; }
-.tag button { border: 0; background: transparent; cursor: pointer; color: var(--text-2); font-size: 1rem; line-height: 1; padding: 0 .3rem; }
-.table { width: 100%; border-collapse: collapse; font-size: .9rem; }
-.table th, .table td { text-align: left; padding: .5rem; border-bottom: 1px solid var(--line); }
-.events { margin: 0; padding-left: 1.2rem; font-size: .82rem; color: var(--text-2); max-height: 320px; overflow: auto; font-variant-numeric: tabular-nums; }
-#invite-url { flex: 1 1 280px; }
-
-/* 질문창: 하단 고정 */
-.ask {
-  position: fixed; left: calc(216px + 20px); right: 20px; bottom: 16px; z-index: 6; display: flex; gap: .5rem;
-  max-width: 1100px; padding: 8px; border-radius: 14px; border: 1px solid var(--line);
-  background: color-mix(in srgb, var(--surface) 86%, transparent);
-  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); box-shadow: var(--shadow);
-}
-.shell.has-detail .ask { right: calc(400px + 20px); }
-.ask input { flex: 1; border: 0; background: transparent; }
-
-.tabbar { display: none; }
-.toast {
-  position: fixed; left: 50%; bottom: 84px; transform: translateX(-50%); background: var(--text); color: var(--bg);
-  padding: .6rem 1rem; border-radius: 10px; font-size: .9rem; opacity: 0; pointer-events: none; transition: opacity .2s; z-index: 50;
-}
-.toast.show { opacity: 1; }
-
-/* 모바일: 하단 탭, 상세는 전체 화면 */
-@media (max-width: 900px) {
-  .shell, .shell.has-detail { grid-template-columns: minmax(0, 1fr); grid-template-areas: "top" "main"; }
-  .sidebar { display: none; }
-  .topbar { padding: 10px 16px; padding-top: max(10px, env(safe-area-inset-top)); }
-  .main { padding: 16px 16px 150px; }
-  .filters { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; max-width: 100%; }
-  .chip { flex: 0 0 auto; }
-  .bento { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-  .tile { padding: 10px 12px; }
-  .tile .num { font-size: 1.5rem; }
-  .top-list li button { flex-wrap: wrap; row-gap: 0; }
-  .top-list .t { flex-basis: 100%; }
-  .tile.wide { grid-column: span 2; }
-  .item { grid-template-columns: 56px minmax(0, 1fr); }
-  .item .meta { grid-column: 2; justify-self: start; }
-  .kbd-hint { display: none; }
-  .detail { position: fixed; inset: 0; z-index: 20; height: auto; border: 0; }
-  .ask { left: 12px; right: 12px; bottom: calc(64px + env(safe-area-inset-bottom)); }
-  .shell.has-detail .ask { right: 12px; }
-  .tabbar {
-    display: flex; position: fixed; left: 0; right: 0; bottom: 0; z-index: 7; justify-content: space-around;
-    padding: 8px 0 calc(8px + env(safe-area-inset-bottom)); background: var(--surface); border-top: 1px solid var(--line);
-  }
-  .tabbar a { text-decoration: none; color: var(--text-2); font-weight: 700; font-size: .85rem; padding: .3rem .8rem; }
-  .tabbar a[aria-current="page"] { color: var(--brand); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  * { animation: none !important; transition: none !important; }
-}
-```
-
----
-
-# [첨부] scripts/windows/setup.ps1
-
-```ps1
-# 청년의사 브리핑 설치 (한 번만 실행)
-# 사용법: newsbot 폴더에서 PowerShell을 열고  powershell -ExecutionPolicy Bypass -File scripts\windows\setup.ps1
-$ErrorActionPreference = "Stop"
-$root = Resolve-Path (Join-Path $PSScriptRoot "..\..")
-Set-Location $root
-
-if (-not (Get-Command py -ErrorAction SilentlyContinue)) {
-    Write-Host "Python이 없습니다. https://www.python.org/downloads/ 에서 3.11 이상을 설치하고 'Add python.exe to PATH'를 체크한 뒤 다시 실행하세요." -ForegroundColor Red
-    exit 1
-}
-py -3 -c "import sys; assert sys.version_info >= (3, 11), sys.version" 
-if ($LASTEXITCODE -ne 0) { Write-Host "Python 3.11 이상이 필요합니다." -ForegroundColor Red; exit 1 }
-
-if (-not (Test-Path ".venv")) { py -3 -m venv .venv }
-& .\.venv\Scripts\python.exe -m pip install --upgrade pip
-& .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-
-if (-not (Test-Path ".env")) {
-    Copy-Item ".env.example" ".env"
-    Write-Host ".env 파일을 만들었습니다. 메모장으로 열어 DART_API_KEY 를 넣어 주세요." -ForegroundColor Yellow
-}
-New-Item -ItemType Directory -Force -Path "data" | Out-Null
-
-Write-Host ""
-Write-Host "설치 완료. 다음 순서로 진행하세요:" -ForegroundColor Green
-Write-Host "  1) 관리자 계정:  .\.venv\Scripts\python.exe -m newsbot create-admin 내아이디 --name 내이름"
-Write-Host "  2) 실행:         scripts\windows\start.bat"
-Write-Host "  3) 브라우저:     http://localhost:8000"
-```
-
----
-
 # [첨부] scripts/windows/install-autostart.ps1
 
 ```ps1
@@ -2353,238 +4381,178 @@ Write-Host "등록 완료: 부팅 때마다 자동 실행됩니다. 지금도 �
 
 ---
 
-# [첨부] scripts/windows/power-settings.ps1
+# [첨부] tests/test_llm.py
 
-```ps1
-# 노트북을 서버로 쓰기 위한 전원 설정 (전원 연결 시에만 적용, 배터리일 때는 기존 절전 유지)
-# 관리자 권한 PowerShell에서 실행
-powercfg /change standby-timeout-ac 0      # 전원 연결 시 절전 안 함
-powercfg /change hibernate-timeout-ac 0    # 전원 연결 시 최대 절전 안 함
-powercfg /setacvalueindex SCHEME_CURRENT SUB_BUTTONS LIDACTION 0   # 전원 연결 시 덮개 닫아도 아무것도 안 함
-powercfg /setactive SCHEME_CURRENT
-Write-Host "전원 설정 완료. 덮개를 닫을 때는 반드시 전원을 연결해 두세요."
-Write-Host "Windows Update는 '사용 시간'을 설정해 업무 시간 재부팅을 피하고, 재부팅돼도 자동 실행이 다시 켭니다."
+```py
+import json
+from types import SimpleNamespace as NS
+
+import pytest
+
+from newsbot.config import Settings
+from newsbot.db import Database
+from newsbot.llm import LLM, BudgetExceeded, ClaudeBackend, LLMError, OpenAIBackend, Tool
+from newsbot.writing import check_numbers
+
+TOOL = Tool("lookup", "찾기", {"type": "object", "properties": {"q": {"type": "string"}}},
+            lambda a: {"found": a.get("q", "") + "!"})
+
+
+class FakeClaude:
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.calls = []
+        self.beta = NS(messages=NS(create=self.create))
+
+    def create(self, **kw):
+        self.calls.append(kw)
+        return self.responses.pop(0)
+
+
+def c_resp(content, stop="end_turn"):
+    return NS(content=content, stop_reason=stop,
+              usage=NS(input_tokens=1000, output_tokens=200, cache_read_input_tokens=0, cache_creation_input_tokens=0))
+
+
+def test_claude_tool_loop_and_fallback_params():
+    fake = FakeClaude([
+        c_resp([NS(type="tool_use", id="t1", name="lookup", input={"q": "유한"})], stop="tool_use"),
+        c_resp([NS(type="text", text="답: 유한!")]),
+    ])
+    b = ClaudeBackend("k", client=fake)
+    text, trace, usages = b.agent("claude-sonnet-5-5", "sys", [{"role": "user", "content": "질문"}], [TOOL], "main", 5)
+    assert text == "답: 유한!" and trace[0]["tool"] == "lookup" and len(usages) == 2
+    first, second = fake.calls
+    assert first["fallbacks"] == "default" and first["betas"] == ["server-side-fallback-2026-07-01"]
+    assert first["output_config"] == {"effort": "medium"}
+    assert "temperature" not in first and "tool_choice" not in first
+    tool_result = second["messages"][-1]["content"][0]
+    assert tool_result["type"] == "tool_result" and json.loads(tool_result["content"]) == {"found": "유한!"}
+
+
+def test_haiku_has_no_fallbacks_and_refusal_raises():
+    fake = FakeClaude([c_resp([], stop="refusal")])
+    with pytest.raises(LLMError):
+        ClaudeBackend("k", client=fake).complete("claude-haiku-5-5", "s", "p", "fast")
+    assert "fallbacks" not in fake.calls[0]
+
+
+def test_openai_tool_loop():
+    calls = []
+
+    def create(**kw):
+        calls.append(kw)
+        if len(calls) == 1:
+            tc = NS(id="c1", function=NS(name="lookup", arguments='{"q":"한미"}'),
+                    model_dump=lambda: {"id": "c1", "type": "function", "function": {"name": "lookup", "arguments": '{"q":"한미"}'}})
+            msg = NS(content=None, tool_calls=[tc])
+        else:
+            msg = NS(content="답: 한미!", tool_calls=None)
+        return NS(choices=[NS(message=msg)], usage=NS(prompt_tokens=500, completion_tokens=50))
+
+    b = OpenAIBackend("k", client=NS(chat=NS(completions=NS(create=create))))
+    text, trace, _ = b.agent("gpt-6.1-sol", "sys", [{"role": "user", "content": "q"}], [TOOL], "main", 5)
+    assert text == "답: 한미!" and calls[1]["messages"][-1]["role"] == "tool"
+
+
+def test_budget_and_cost(tmp_path):
+    db = Database(":memory:")
+    db.execute("INSERT INTO users(id, username, display_name, pw_hash, created_at, monthly_limit_krw) VALUES(1,'a','A','x','t',100)")
+    fake = FakeClaude([c_resp([NS(type="text", text="ok")])] * 3)
+    llm = LLM(Settings(llm_provider="claude", anthropic_api_key="k", data_dir=tmp_path), db, backend=ClaudeBackend("k", client=fake))
+    text, model = llm.complete("s", "p", "main", user_id=1, purpose="t")
+    # sonnet 5.5: 1000*2 + 200*10 = 4000 / 1e6 USD = 0.004 USD = 5.6원
+    assert model == "claude-sonnet-5-5" and llm.month_spent(1) == pytest.approx(5.6)
+    db.execute("UPDATE users SET monthly_limit_krw=5 WHERE id=1")
+    with pytest.raises(BudgetExceeded):
+        llm.complete("s", "p", "main", user_id=1, purpose="t")
+
+
+def test_check_numbers():
+    checks = check_numbers("매출 1,234억원, 15% 증가, 2026년", "매출액 1234억원 ... 2026년 실적")
+    found = {c["number"]: c["found"] for c in checks}
+    assert found == {"1,234": True, "15": False, "2026": True}
 ```
 
 ---
 
-# [첨부] tests/test_dart.py
+# [첨부] tests/test_alio.py
 
 ```py
 import asyncio
+import json
 
 import httpx
-import pytest
 
-from newsbot.dart import Collector, DartClient, DartLimitReached
+from newsbot.alio import AlioClient, AlioCollector, AlioConfig, AlioItem, compare, extract_finance, parse_tables, finance_overview
 from newsbot.db import Database
-from newsbot.rules import Rules
 
-RULES = Rules.from_dict({
-    "watch": {"companies": ["유한양행"]},
-    "health": {"industry_prefixes": ["21"]},
-    "levels": {"red": ["기술이전"], "gray": ["대량보유"]},
-})
-
-
-def item(no, corp, title, code="00000001"):
-    return {"rcept_no": no, "corp_code": code, "corp_name": corp, "report_nm": title, "rcept_dt": "20261105",
-            "flr_nm": corp, "rm": "", "stock_code": "000100"}
+FIN_HTML = """<table><tr><th>구분</th><th>2025년</th><th>2024년</th></tr>
+<tr><td>(단위: 백만원)</td><td></td><td></td></tr>
+<tr><td>매출액(의료수익)</td><td>1,234,500</td><td>1,100,000</td></tr>
+<tr><td>영업이익</td><td>(12,000)</td><td>△3,000</td></tr>
+<tr><td>당기순이익</td><td>5,000</td><td>10,000</td></tr></table>"""
 
 
-class FakeDart:
-    def __init__(self, pages, industries=None, status="000"):
-        self.pages = pages          # list of lists
-        self.industries = industries or {}
-        self.status = status
+def test_extract_and_compare():
+    fin = extract_finance(parse_tables(FIN_HTML), ["매출액", "영업이익", "당기순이익"])
+    items = {i["label"]: i for i in compare(fin)}
+    assert items["매출액"]["value"] == 1234500 and items["매출액"]["prev"] == 1100000
+    assert items["매출액"]["pct"] == 12.2
+    assert items["영업이익"]["value"] == -12000 and items["영업이익"]["prev"] == -3000
+    assert items["당기순이익"]["pct"] == -50.0
+
+
+def test_ascending_years_sorted_latest_first():
+    html = FIN_HTML.replace("2025년", "X").replace("2024년", "2025년").replace("X", "2024년")
+    fin = extract_finance(parse_tables(html), ["매출액"])
+    assert fin["rows"][0]["values"][0]["year"] == "2025"
+
+
+class FakeAlio:
+    def __init__(self):
         self.calls = []
+        self.susi_rows = {("R1", "A1"): [{"title": "2025년 결산", "idate": "2026-03-30", "disclosureNo": "D1"}],
+                          ("R2", "A1"): [{"title": "이사회 회의록(3차)", "idate": "2026-10-01", "idx": 77}]}
 
-    def handler(self, request: httpx.Request) -> httpx.Response:
-        self.calls.append(request.url.path)
-        if self.status != "000":
-            return httpx.Response(200, json={"status": self.status, "message": "제한"})
-        if request.url.path.endswith("company.json"):
-            code = request.url.params["corp_code"]
-            return httpx.Response(200, json={"status": "000", "induty_code": self.industries.get(code, "64121")})
-        page = int(request.url.params["page_no"])
-        lst = self.pages[page - 1] if page <= len(self.pages) else []
-        return httpx.Response(200, json={"status": "000", "page_no": page, "total_page": len(self.pages), "list": lst})
-
-
-def make(fake, db=None, rescan=2):
-    db = db or Database(":memory:")
-    http = httpx.AsyncClient(transport=httpx.MockTransport(fake.handler))
-    client = DartClient("key", db, daily_limit=1000, http=http)
-    return Collector(client, db, RULES, rescan_pages=rescan), db
-
-
-def test_bootstrap_then_new_items():
-    fake = FakeDart([[item("1", "유한양행", "기술이전계약체결")]])
-    col, db = make(fake)
-    r1 = asyncio.run(col.poll())
-    assert r1.bootstrap and len(r1.new) == 1          # 첫 실행: 저장은 하되
-    fake.pages = [[item("2", "유한양행", "분기보고서"), item("1", "유한양행", "기술이전계약체결")]]
-    r2 = asyncio.run(col.poll())
-    assert not r2.bootstrap and [r["rcept_no"] for r in r2.new] == ["2"]
+    def handler(self, req: httpx.Request):
+        self.calls.append(req.url.path)
+        p = req.url.path
+        if p.endswith("findOrganApbaList.json"):
+            return httpx.Response(200, json={"data": {"organList": {"page": {"totalPage": 1}, "result": [
+                {"apbaId": "A1", "apbaNa": "서울대학교병원", "typeNa": "기타공공기관", "jidtNa": "교육부"},
+                {"apbaId": "B9", "apbaNa": "어떤공사"}]}}})
+        if p.endswith("formList.json"):
+            return httpx.Response(200, json={"status": "success", "data": [
+                {"mcdnm": "요약 손익계산서", "reportNos": "R1"}, {"mcdnm": "이사회 회의록", "reportNos": "R2"},
+                {"mcdnm": "기타", "reportNos": "R3"}]})
+        if p.endswith("itemReportListSusi.json"):
+            body = json.loads(req.content)
+            return httpx.Response(200, json={"data": {"result": self.susi_rows.get((body["reportFormRootNo"], body["apbaId"]), [])}})
+        if p.endswith("itemReportRight.do"):
+            return httpx.Response(200, text=FIN_HTML)
+        return httpx.Response(404)
 
 
-def test_late_arrival_on_second_page_is_caught():
-    """DART 반영 지연으로 오래된 접수번호가 나중에 2페이지에 나타나도 놓치지 않는다."""
-    fake = FakeDart([[item("10", "유한양행", "a")], [item("9", "유한양행", "b")]])
-    col, db = make(fake)
-    asyncio.run(col.poll())
-    fake.pages = [[item("11", "유한양행", "c"), item("10", "유한양행", "a")],
-                  [item("8", "유한양행", "늦게 반영된 기술이전"), item("9", "유한양행", "b")]]
-    r = asyncio.run(col.poll())
-    assert sorted(x["rcept_no"] for x in r.new) == ["11", "8"]
-    late = db.one("SELECT level FROM disclosures WHERE rcept_no='8'")
-    assert late["level"] == "red"
-
-
-def test_industry_filter_and_cache():
-    fake = FakeDart([[item("1", "어떤제약", "분기보고서", code="A"), item("2", "어떤은행", "분기보고서", code="B")]],
-                    industries={"A": "21102", "B": "64121"})
-    col, db = make(fake)
-    r = asyncio.run(col.poll())
-    assert [x["corp_name"] for x in r.new] == ["어떤제약"]
-    company_calls = sum(1 for c in fake.calls if c.endswith("company.json"))
-    asyncio.run(col.poll())
-    assert sum(1 for c in fake.calls if c.endswith("company.json")) == company_calls  # 캐시
-
-
-def test_limit_status_raises():
-    fake = FakeDart([[]], status="020")
-    col, _ = make(fake)
-    with pytest.raises(DartLimitReached):
-        asyncio.run(col.poll())
-
-
-def test_local_daily_limit():
-    fake = FakeDart([[item("1", "유한양행", "a")]])
+def make():
+    fake = FakeAlio()
     db = Database(":memory:")
-    http = httpx.AsyncClient(transport=httpx.MockTransport(fake.handler))
-    col = Collector(DartClient("key", db, daily_limit=0, http=http), db, RULES)
-    with pytest.raises(DartLimitReached):
-        asyncio.run(col.poll())
-    assert fake.calls == []
-```
-
----
-
-# [첨부] tests/test_app.py
-
-```py
-from pathlib import Path
-
-import pytest
-from fastapi.testclient import TestClient
-
-from newsbot import auth
-from newsbot.app import create_app
-from newsbot.config import BASE_DIR, Settings
-from newsbot.db import Database, now_iso
+    client = AlioClient(http=httpx.AsyncClient(transport=httpx.MockTransport(fake.handler)), delay=0)
+    cfg = AlioConfig(organizations=["서울대학교 병원", "없는병원"],
+                     items=[AlioItem("손익계산서", "red", True), AlioItem("이사회 회의록", "yellow")],
+                     finance_rows=["매출액", "당기순이익"])
+    return AlioCollector(client, db, cfg), db, fake
 
 
-@pytest.fixture()
-def ctx(tmp_path: Path):
-    settings = Settings(db_path=tmp_path / "t.db", data_dir=tmp_path, rules_path=BASE_DIR / "config/rules.toml")
-    db = Database(settings.db_path)
-    admin_id = auth.create_user(db, "admin", "관리자", "admin-password-1", role="admin")
-    app = create_app(settings, db, start_poller=False)
-    db.execute(
-        """INSERT INTO disclosures(rcept_no, corp_code, corp_name, report_nm, rcept_dt, level, keyword,
-           is_correction, watched, first_seen_at) VALUES('20261105000001','A','유한양행','기술이전계약체결',
-           '20261105','red','기술이전',0,1,?)""", (now_iso(),))
-    return TestClient(app), db, admin_id
-
-
-def login(client, username="admin", password="admin-password-1"):
-    r = client.post("/api/login", json={"username": username, "password": password})
-    assert r.status_code == 200, r.text
-    return r
-
-
-def test_requires_login(ctx):
-    client, _, _ = ctx
-    assert client.get("/api/feed").status_code == 401
-    assert client.get("/").status_code == 200  # 화면은 열림
-
-
-def test_feed_summary_and_claim(ctx):
-    client, db, _ = ctx
-    login(client)
-    feed = client.get("/api/feed").json()["items"]
-    assert feed[0]["corp_name"] == "유한양행" and feed[0]["url"].endswith("rcpNo=20261105000001")
-    s = client.get("/api/summary").json()
-    assert s["red"] == 1 and s["unclaimed_top"] == 1
-    assert client.post("/api/claims/20261105000001").status_code == 200
-    assert client.get("/api/summary").json()["my_claims"] == 1
-    assert client.get("/api/feed?mine=1").json()["items"][0]["claimed_name"] == "관리자"
-
-
-def test_invite_register_and_claim_conflict(ctx):
-    client, db, _ = ctx
-    login(client)
-    url = client.post("/api/admin/invites", json={"role": "reporter"}).json()["url"]
-    code = url.rsplit("/", 1)[1]
-    client.post("/api/claims/20261105000001")
-
-    other = TestClient(client.app)
-    r = other.post("/api/register", json={"code": code, "username": "kim", "display_name": "김기자",
-                                          "password": "short"})
-    assert r.status_code == 400  # 비밀번호 너무 짧음
-    r = other.post("/api/register", json={"code": code, "username": "kim", "display_name": "김기자",
-                                          "password": "reporter-pass-1"})
-    assert r.status_code == 200
-    assert other.post("/api/claims/20261105000001").status_code == 409
-    assert other.get("/api/admin/users").status_code == 403
-    # 같은 초대 코드는 다시 못 씀
-    third = TestClient(client.app)
-    r = third.post("/api/register", json={"code": code, "username": "lee", "display_name": "이기자",
-                                          "password": "reporter-pass-2"})
-    assert r.status_code == 400
-    me = other.get("/api/me").json()
-    assert {"kind": "watch", "value": ""} in me["subscriptions"]
-
-
-def test_login_lockout(ctx):
-    client, _, _ = ctx
-    for _ in range(5):
-        assert client.post("/api/login", json={"username": "admin", "password": "wrong"}).status_code == 401
-    assert client.post("/api/login", json={"username": "admin", "password": "admin-password-1"}).status_code == 429
-
-
-def test_subscriptions_and_push_key(ctx):
-    client, _, _ = ctx
-    login(client)
-    assert client.post("/api/subscriptions", json={"kind": "company", "value": ""}).status_code == 400
-    assert client.post("/api/subscriptions", json={"kind": "keyword", "value": "기술이전"}).status_code == 200
-    assert {"kind": "keyword", "value": "기술이전"} in client.get("/api/me").json()["subscriptions"]
-    key = client.get("/api/push/key").json()["key"]
-    assert len(key) > 80
-    assert client.post("/api/push/test").json()["sent"] == 0  # 등록 기기 없음
-
-
-def test_security_headers_and_health(ctx):
-    client, _, _ = ctx
-    r = client.get("/")
-    assert "frame-ancestors 'none'" in r.headers["content-security-policy"]
-    assert client.get("/healthz").json()["ok"] is True
-    assert client.get("/sw.js").status_code == 200
-    assert client.get("/manifest.webmanifest").status_code == 200
-
-
-def test_recipients():
-    from newsbot.push import recipients
-    from newsbot.rules import Rules
-
-    db = Database(":memory:")
-    a = auth.create_user(db, "a", "A", "password-123")
-    b = auth.create_user(db, "b", "B", "password-123")
-    c = auth.create_user(db, "c", "C", "password-123")
-    db.execute("INSERT INTO subscriptions VALUES(?, 'company', '유한 양행')", (a,))
-    db.execute("INSERT INTO subscriptions VALUES(?, 'keyword', '기술이전')", (b,))
-    db.execute("INSERT INTO subscriptions VALUES(?, 'company', '한미약품')", (c,))
-    row = {"corp_name": "유한양행", "report_nm": "기술이전계약체결", "watched": 1}
-    assert recipients(db, Rules(), row) == [a, b]
+def test_poll_bootstrap_then_new():
+    col, db, fake = make()
+    assert asyncio.run(col.poll()) == []                       # 첫 실행: 저장만
+    assert json.loads(db.get("alio_missing")) == ["없는병원"]
+    assert db.one("SELECT COUNT(*) n FROM disclosures WHERE source='alio'")["n"] == 2
+    fin = finance_overview(db)
+    assert fin[0]["org"] == "서울대학교병원" and fin[0]["items"][0]["label"] == "매출액"
+    fake.susi_rows[("R2", "A1")].append({"title": "이사회 회의록(4차)", "idate": "2026-11-01", "idx": 78})
+    new = asyncio.run(col.poll())
+    assert [r["report_nm"] for r in new] == ["[이사회 회의록] 이사회 회의록(4차)"]
+    assert new[0]["level"] == "yellow" and new[0]["source"] == "alio"
 ```

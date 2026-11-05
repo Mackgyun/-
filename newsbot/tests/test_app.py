@@ -111,3 +111,99 @@ def test_recipients():
     db.execute("INSERT INTO subscriptions VALUES(?, 'company', '한미약품')", (c,))
     row = {"corp_name": "유한양행", "report_nm": "기술이전계약체결", "watched": 1}
     assert recipients(db, Rules(), row) == [a, b]
+
+
+class FakeBackend:
+    name = "claude"
+
+    def __init__(self):
+        self.prompts = []
+
+    def complete(self, model, system, prompt, tier):
+        from newsbot.llm import Usage
+        self.prompts.append((system, prompt))
+        return "제목\n\n유한양행이 기술이전 계약을 맺었다. 계약금은 500억원이다.", [Usage(1000, 300)]
+
+    def agent(self, model, system, history, tools, tier, max_steps):
+        from newsbot.llm import Usage
+        names = [t.name for t in tools]
+        out = next(t for t in tools if t.name == "search_disclosures").func({"query": "유한양행"})
+        return f"찾은 공시 {len(out)}건 (도구: {','.join(names)})", [{"tool": "search_disclosures", "input": {}, "output": ""}], [Usage(10, 10)]
+
+
+@pytest.fixture()
+def ai(tmp_path: Path):
+    from newsbot.llm import LLM
+
+    settings = Settings(db_path=tmp_path / "t.db", data_dir=tmp_path, rules_path=BASE_DIR / "config/rules.toml",
+                        alio_path=BASE_DIR / "config/alio.toml", llm_provider="claude")
+    db = Database(settings.db_path)
+    auth.create_user(db, "admin", "관리자", "admin-password-1", role="admin")
+    backend = FakeBackend()
+    app = create_app(settings, db, start_poller=False, llm=LLM(settings, db, backend=backend))
+    db.execute("""INSERT INTO disclosures(rcept_no, corp_code, corp_name, report_nm, rcept_dt, level, keyword,
+               is_correction, watched, first_seen_at) VALUES('20261105000001','A','유한양행','기술이전계약체결',
+               '20261105','red','기술이전',0,1,?)""", (now_iso(),))
+    client = TestClient(app)
+    login(client)
+    return client, db, backend
+
+
+def test_ask_and_history(ai):
+    client, db, _ = ai
+    r = client.post("/api/ask", json={"question": "유한양행 오늘 공시?"})
+    assert r.status_code == 200, r.text
+    assert "찾은 공시 1건" in r.json()["answer"] and "search_my_mail" not in r.json()["answer"]
+    assert client.get("/api/chats").json()["items"][0]["question"] == "유한양행 오늘 공시?"
+
+
+def test_draft_from_text_with_checks(ai):
+    client, db, backend = ai
+    r = client.post("/api/drafts", json={"source_kind": "text", "title": "보도자료",
+                                         "text": "유한양행은 오늘 기술이전 계약을 체결했다고 밝혔다. 계약 규모는 공개하지 않았다. " * 2})
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert {"number": "500", "found": False} == {k: d["checks"][0][k] for k in ("number", "found")}
+    assert "아직 이 기자의 스타일북이 없습니다" in backend.prompts[-1][0]
+    assert client.get(f"/api/drafts/{d['id']}").json()["source_title"] == "보도자료"
+
+
+def test_draft_from_disclosure_and_written(ai):
+    client, db, _ = ai
+    r = client.post("/api/drafts", json={"source_kind": "disclosure", "source_ref": "20261105000001"})
+    assert r.status_code == 400 and "원문" in r.json()["detail"]  # DART 키 없고 메모도 없음
+    r = client.post("/api/drafts", json={"source_kind": "disclosure", "source_ref": "20261105000001",
+                                         "text": "회사 IR팀 확인: 계약 상대는 미국 바이오텍, 임상 1상 단계"})
+    assert r.status_code == 200, r.text
+    assert client.post("/api/claims/20261105000001/written", json={"url": "https://x/1"}).status_code == 400
+    client.post("/api/claims/20261105000001")
+    assert client.post("/api/claims/20261105000001/written", json={"url": "https://x/1"}).status_code == 200
+    m = client.get("/api/admin/metrics").json()
+    assert m["users"][0]["written"] == 1 and m["users"][0]["drafts"] == 1 and m["users"][0]["cost_krw"] > 0
+
+
+def test_stylebook_put_and_build_requires_articles(ai):
+    client, _, _ = ai
+    assert client.post("/api/stylebook/build").status_code == 400  # 기자 ID 없음
+    client.post("/api/me/reporter", json={"reporter_id": "admin1"})
+    r = client.post("/api/stylebook/build")
+    assert r.status_code == 400 and "5편" in r.json()["detail"]
+    assert client.put("/api/stylebook", json={"content": "리드는 짧게 쓴다. 인용은 밝혔다로."}).status_code == 200
+    assert "리드는 짧게" in client.get("/api/stylebook").json()["content"]
+
+
+def test_mail_disabled_and_alio_view(ai):
+    client, _, _ = ai
+    assert client.get("/api/mail").status_code == 400
+    v = client.get("/api/alio").json()
+    assert v["enabled"] is True and v["finance"] == []
+    assert client.get("/api/me").json()["llm_ready"] is True
+
+
+def test_alio_ids_with_colons_work(ai):
+    client, db, _ = ai
+    db.execute("""INSERT INTO disclosures(rcept_no, corp_code, corp_name, report_nm, rcept_dt, level, first_seen_at,
+               source, link) VALUES('alio:R1:D1','A1','서울대학교병원','[손익계산서] 결산','20261101','red',?, 'alio','https://www.alio.go.kr/x')""",
+               (now_iso(),))
+    assert client.get("/api/disclosures/alio:R1:D1").json()["url"] == "https://www.alio.go.kr/x"
+    assert client.post("/api/claims/alio:R1:D1").status_code == 200

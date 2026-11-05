@@ -43,6 +43,10 @@
       <nav class="nav">
         <a href="#feed" data-view="feed" class="nav-item"><span aria-hidden="true">◎</span>피드</a>
         <a href="#mine" data-view="mine" class="nav-item"><span aria-hidden="true">✓</span>내가 맡은 건</a>
+        <a href="#ask" data-view="ask" class="nav-item"><span aria-hidden="true">?</span>질문</a>
+        <a href="#draft" data-view="draft" class="nav-item"><span aria-hidden="true">✎</span>기사 초안</a>
+        <a href="#mail" data-view="mail" class="nav-item"><span aria-hidden="true">✉</span>보도자료 메일</a>
+        <a href="#alio" data-view="alio" class="nav-item"><span aria-hidden="true">▤</span>알리오·결산</a>
         <a href="#settings" data-view="settings" class="nav-item"><span aria-hidden="true">⚙</span>내 설정</a>
         <a href="#admin" data-view="admin" class="nav-item admin-only" hidden><span aria-hidden="true">⌂</span>관리자</a>
       </nav>
@@ -62,6 +66,7 @@
         <button class="chip" data-level="red" aria-pressed="false"><span class="lv lv-red" aria-hidden="true">●</span>중요</button>
         <button class="chip" data-level="yellow" aria-pressed="false"><span class="lv lv-yellow" aria-hidden="true">●</span>일반</button>
         <button class="chip" data-watched="1" aria-pressed="false">★ 감시 기업</button>
+        <button class="chip" data-source="alio" aria-pressed="false">알리오</button>
       </div>
       <button id="push-btn" class="btn primary small" type="button" hidden>PC·폰 알림 켜기</button>
     </header>
@@ -71,6 +76,7 @@
       <section id="view-feed" class="view">
         <div id="mode-banner" class="banner" hidden></div>
         <div class="bento" id="briefing" aria-live="polite"></div>
+        <div id="digest" class="card digest" hidden></div>
         <div class="feed-head">
           <h2 id="feed-title">오늘의 피드</h2>
           <span class="muted small kbd-hint">J/K 이동 · Enter 열기 · C 담당 · / 검색</span>
@@ -78,6 +84,58 @@
         <ul id="feed" class="feed" role="listbox" aria-label="공시 목록"></ul>
         <button id="more-btn" class="btn ghost" type="button" hidden>더 보기</button>
         <p id="empty" class="empty" hidden></p>
+      </section>
+
+      <!-- 질문 -->
+      <section id="view-ask" class="view" hidden>
+        <h2>질문</h2>
+        <p class="muted small">수집된 공시·알리오 결산·과거 기사(메일 기능이 켜지면 내 보도자료 메일)에서 찾아 출처와 함께 답합니다. 답의 숫자는 꼭 원문으로 확인하세요.</p>
+        <div id="chat" class="chat" aria-live="polite"></div>
+      </section>
+
+      <!-- 기사 초안 -->
+      <section id="view-draft" class="view" hidden>
+        <h2>기사 초안</h2>
+        <div class="card stack">
+          <h3>원자료</h3>
+          <p id="draft-source" class="muted small">보도자료나 메모를 붙여 넣거나, 피드의 공시 상세에서 [기사 초안]을 누르세요.</p>
+          <form id="draft-form" class="stack">
+            <input name="title" placeholder="제목 (선택)" maxlength="200" aria-label="원자료 제목">
+            <textarea name="text" rows="8" placeholder="보도자료 본문, 취재 메모 등" aria-label="원자료 본문"></textarea>
+            <div class="row">
+              <select name="kind" aria-label="기사 유형"><option>스트레이트</option><option>해설</option><option>단신</option></select>
+              <button class="btn primary" type="submit">초안 쓰기</button>
+              <span id="draft-busy" class="muted small" hidden>쓰는 중… (30초~1분)</span>
+            </div>
+          </form>
+        </div>
+        <div id="draft-result" class="card stack" hidden>
+          <div class="row between"><h3>초안 <span class="badge fix">AI 작성 · 출고 전 검수</span></h3>
+            <button id="draft-copy" class="btn" type="button">복사</button></div>
+          <textarea id="draft-text" rows="16" aria-label="초안"></textarea>
+          <div id="draft-checks"></div>
+          <div id="draft-examples" class="muted small"></div>
+        </div>
+        <div class="card stack"><h3>지난 초안</h3><ul id="draft-list" class="plain-list"></ul></div>
+      </section>
+
+      <!-- 메일 -->
+      <section id="view-mail" class="view" hidden>
+        <h2>보도자료 메일</h2>
+        <p id="mail-off" class="banner" hidden>메일 기능은 개인정보 국외 이전 등 법무·IT 검토 후 관리자가 켭니다.</p>
+        <div id="mail-wrap" class="stack">
+          <p class="muted small">본인이 지정한 메일함만 읽기 전용으로 가져옵니다. 다른 사람은 볼 수 없습니다. 연결은 '내 설정'에서 합니다.</p>
+          <ul id="mail-list" class="feed"></ul>
+          <div id="mail-detail" class="card stack" hidden></div>
+        </div>
+      </section>
+
+      <!-- 알리오 -->
+      <section id="view-alio" class="view" hidden>
+        <h2>알리오 · 공공기관 결산</h2>
+        <p id="alio-status" class="muted small"></p>
+        <div id="alio-finance" class="stack"></div>
+        <div class="card stack"><h3>감시 기관</h3><p id="alio-orgs" class="small"></p><p id="alio-missing" class="error small"></p></div>
       </section>
 
       <!-- 설정 -->
@@ -108,6 +166,41 @@
           <p class="muted small">아이폰은 Safari 공유 버튼 → '홈 화면에 추가'로 설치한 뒤 그 앱에서 알림을 켜야 합니다.</p>
         </div>
         <div class="card stack">
+          <h3>내 기사와 스타일북</h3>
+          <p class="muted small">청년의사 기자 ID(이메일 @ 앞부분)를 넣고 내 기사를 가져오면, AI가 문체를 분석해 스타일북을 만듭니다. 스타일북은 직접 고칠 수 있고 초안에 쓰입니다.</p>
+          <form id="reporter-form" class="row">
+            <input name="reporter_id" placeholder="예: soo331" pattern="[A-Za-z0-9._-]{2,40}" aria-label="기자 ID" required>
+            <button class="btn" type="submit">저장</button>
+            <button id="articles-btn" class="btn" type="button">내 기사 가져오기</button>
+          </form>
+          <p id="articles-state" class="muted small"></p>
+          <div class="row"><button id="stylebook-build" class="btn primary" type="button">스타일북 만들기 (AI)</button>
+            <span id="stylebook-meta" class="muted small"></span></div>
+          <textarea id="stylebook" rows="10" placeholder="스타일북이 여기에 표시됩니다. 직접 써도 됩니다." aria-label="스타일북"></textarea>
+          <div class="row"><button id="stylebook-save" class="btn" type="button">스타일북 저장</button></div>
+        </div>
+        <div id="mail-settings" class="card stack">
+          <h3>보도자료 메일 연결</h3>
+          <p id="mail-account-state" class="muted small"></p>
+          <form id="mail-form" class="stack">
+            <div class="row">
+              <input name="host" value="imap.gmail.com" aria-label="IMAP 서버">
+              <input name="username" placeholder="메일 주소" aria-label="메일 주소" required>
+            </div>
+            <div class="row">
+              <input name="password" type="password" placeholder="앱 비밀번호" aria-label="앱 비밀번호" required autocomplete="off">
+              <input name="folder" value="보도자료" aria-label="메일함(라벨) 이름">
+              <button class="btn" type="submit">연결</button>
+              <button id="mail-disconnect" class="btn ghost" type="button">연결 해제</button>
+            </div>
+          </form>
+          <p class="muted small">Gmail은 2단계 인증을 켠 뒤 '앱 비밀번호'를 만들어 넣습니다. 비밀번호는 암호화해 저장하고, 지정한 라벨 하나만 읽습니다.</p>
+        </div>
+        <div class="card stack">
+          <h3>AI 사용량</h3>
+          <p id="usage" class="muted small"></p>
+        </div>
+        <div class="card stack">
           <h3>화면</h3>
           <label class="row">글자 크기
             <input id="font-size" type="range" min="14" max="20" step="1" aria-label="글자 크기">
@@ -118,6 +211,12 @@
       <!-- 관리자 -->
       <section id="view-admin" class="view" hidden>
         <h2>관리자</h2>
+        <div class="card stack">
+          <h3>시범사업 성과 (최근 30일)</h3>
+          <dl id="metrics-totals" class="kv"></dl>
+          <table class="table"><thead><tr><th>기자</th><th>담당</th><th>기사화</th><th>질문</th><th>초안</th><th>AI 비용</th></tr></thead>
+            <tbody id="metrics-users"></tbody></table>
+        </div>
         <div class="card stack">
           <h3>수집 상태</h3>
           <dl id="admin-status" class="kv"></dl>
@@ -132,7 +231,7 @@
         </div>
         <div class="card stack">
           <h3>사용자</h3>
-          <table class="table"><thead><tr><th>이름</th><th>아이디</th><th>권한</th><th>상태</th><th></th></tr></thead>
+          <table class="table"><thead><tr><th>이름</th><th>아이디</th><th>권한</th><th>이번 달 AI</th><th>상태</th><th></th></tr></thead>
             <tbody id="users"></tbody></table>
         </div>
         <div class="card stack">
@@ -149,13 +248,15 @@
 
     <!-- 질문창 (3~4주차에 연결) -->
     <form id="ask" class="ask" autocomplete="off">
-      <input id="ask-input" placeholder="질문하기 (Ctrl+K) · 예: 오늘 기술이전 공시 있어?" aria-label="질문">
+      <input id="ask-input" placeholder="질문하기 (Ctrl+K) · 예: 오늘 기술이전 공시 있어?" aria-label="질문" maxlength="2000">
       <button class="btn primary" type="submit">묻기</button>
     </form>
 
     <nav class="tabbar" aria-label="하단 메뉴">
       <a href="#feed" data-view="feed">피드</a>
       <a href="#mine" data-view="mine">담당</a>
+      <a href="#ask" data-view="ask">질문</a>
+      <a href="#draft" data-view="draft">초안</a>
       <a href="#settings" data-view="settings">설정</a>
       <a href="#admin" data-view="admin" class="admin-only" hidden>관리</a>
     </nav>

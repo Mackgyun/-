@@ -7,7 +7,11 @@ OpenDART 공시검색 API는 공시 제출 후 약 15분 뒤에 반영되고, �
 
 from __future__ import annotations
 
+import html
+import io
 import logging
+import re
+import zipfile
 from dataclasses import dataclass
 from datetime import timedelta
 
@@ -69,6 +73,66 @@ class DartClient:
 
     async def company(self, corp_code: str) -> dict:
         return await self._get("company.json", {"corp_code": corp_code})
+
+    async def document_text(self, rcept_no: str, limit: int = 15000) -> str:
+        """공시 원문(zip 안의 XML)을 글자만 뽑아 돌려준다. 초안·질문의 근거 자료용."""
+        if self.calls_today() >= self.daily_limit:
+            raise DartLimitReached("LOCAL", "오늘 호출 한도 도달")
+        self.db.set(self._count_key(), str(self.calls_today() + 1))
+        resp = await self.http.get(f"{BASE}/document.xml", params={"crtfc_key": self.api_key, "rcept_no": rcept_no})
+        resp.raise_for_status()
+        if not resp.content.startswith(b"PK"):
+            raise DartError("DOC", "원문을 받지 못했습니다")
+        texts = []
+        with zipfile.ZipFile(io.BytesIO(resp.content)) as z:
+            for name in z.namelist():
+                raw = z.read(name)
+                for enc in ("utf-8", "euc-kr", "cp949"):
+                    try:
+                        xml = raw.decode(enc)
+                        break
+                    except UnicodeDecodeError:
+                        continue
+                else:
+                    continue
+                text = re.sub(r"<[^>]+>", " ", xml)
+                text = html.unescape(re.sub(r"[ \t\r\f\v]+", " ", text))
+                texts.append(re.sub(r"\n\s*\n+", "\n", text).strip())
+        return "\n".join(texts)[:limit]
+
+    async def corp_code(self, name: str, cache_path) -> str | None:
+        """회사명 → DART 고유번호. 전체 목록(corpCode.xml)을 주 1회 받아 파일로 캐시한다."""
+        import json
+        import time
+        from pathlib import Path
+
+        row = self.db.one("SELECT corp_code FROM companies WHERE corp_name=?", (name,))
+        if row:
+            return row["corp_code"]
+        path = Path(cache_path)
+        if not path.exists() or time.time() - path.stat().st_mtime > 7 * 86400:
+            self.db.set(self._count_key(), str(self.calls_today() + 1))
+            resp = await self.http.get(f"{BASE}/corpCode.xml", params={"crtfc_key": self.api_key})
+            resp.raise_for_status()
+            with zipfile.ZipFile(io.BytesIO(resp.content)) as z:
+                xml = z.read(z.namelist()[0]).decode("utf-8", errors="replace")
+            mapping = {}
+            for m in re.finditer(r"<corp_code>(\d+)</corp_code>\s*<corp_name>([^<]+)</corp_name>", xml):
+                mapping[m.group(2).strip()] = m.group(1)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(mapping, ensure_ascii=False), encoding="utf-8")
+        mapping = json.loads(path.read_text(encoding="utf-8"))
+        key = "".join(name.split())
+        for n, code in mapping.items():
+            if "".join(n.split()) == key:
+                return code
+        return None
+
+    async def financials(self, corp_code: str, year: int, reprt_code: str = "11011") -> list[dict]:
+        """단일회사 주요계정 (사업보고서 기준). 매출액·영업이익·당기순이익 등."""
+        data = await self._get("fnlttSinglAcnt.json", {"corp_code": corp_code, "bsns_year": str(year),
+                                                       "reprt_code": reprt_code})
+        return data.get("list") or []
 
 
 @dataclass

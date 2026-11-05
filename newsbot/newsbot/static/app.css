@@ -240,3 +240,36 @@ label.row { flex-direction: row; }
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
 }
+
+/* --- 2차: 질문·초안·메일·알리오 --- */
+.between { justify-content: space-between; }
+textarea {
+  width: 100%; border: 1px solid var(--line); background: var(--surface); border-radius: 10px; padding: .7rem .8rem;
+  font: inherit; color: inherit; line-height: 1.6; resize: vertical;
+}
+.digest { white-space: pre-line; font-size: .93rem; }
+.digest .label { font-size: .8rem; color: var(--text-2); font-weight: 600; margin-bottom: .3rem; }
+.chat { display: flex; flex-direction: column; gap: 12px; }
+.bubble { max-width: 820px; padding: .8rem 1rem; border-radius: 14px; white-space: pre-wrap; line-height: 1.65; }
+.bubble.q { align-self: flex-end; background: var(--brand); color: var(--brand-ink); border-bottom-right-radius: 4px; }
+.bubble.a { align-self: flex-start; background: var(--surface); border: 1px solid var(--line); border-bottom-left-radius: 4px; }
+.bubble .tools { margin-top: .5rem; font-size: .78rem; color: var(--text-2); }
+.bubble a { word-break: break-all; }
+.plain-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.plain-list button { all: unset; cursor: pointer; display: block; padding: .4rem .3rem; border-radius: 8px; width: 100%; box-sizing: border-box; }
+.plain-list button:hover { background: var(--surface-2); }
+.checks { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: .35rem; }
+.checks li { font-size: .82rem; border-radius: 8px; padding: .2rem .5rem; background: var(--surface-2); }
+.checks li.miss { background: var(--red-bg); color: var(--red); font-weight: 700; }
+.fin { width: 100%; border-collapse: collapse; font-size: .9rem; font-variant-numeric: tabular-nums; }
+.fin th, .fin td { padding: .45rem .5rem; border-bottom: 1px solid var(--line); text-align: right; }
+.fin th:first-child, .fin td:first-child { text-align: left; }
+.up { color: var(--ok); } .down { color: var(--red); }
+.badge.src { background: var(--surface-2); color: var(--brand); }
+.mail-embargo { color: var(--red); font-weight: 700; font-size: .8rem; }
+.pre { white-space: pre-wrap; font-size: .9rem; line-height: 1.65; max-height: 60vh; overflow: auto; }
+.limit-input { width: 7rem; }
+@media (max-width: 900px) {
+  .fin, .table { display: block; overflow-x: auto; white-space: nowrap; }
+  .bubble { max-width: 100%; }
+}

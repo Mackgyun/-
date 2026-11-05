@@ -85,7 +85,123 @@ CREATE TABLE IF NOT EXISTS kv (
   key TEXT PRIMARY KEY,
   value TEXT
 );
+-- 알리오
+CREATE TABLE IF NOT EXISTS alio_orgs (
+  apba_id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  inst_type TEXT,
+  dept TEXT,
+  resolved_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS alio_finance (
+  disclosure_no TEXT PRIMARY KEY,
+  apba_id TEXT NOT NULL,
+  org_name TEXT NOT NULL,
+  item_name TEXT NOT NULL,
+  title TEXT,
+  idate TEXT,
+  table_json TEXT NOT NULL,
+  fetched_at TEXT NOT NULL
+);
+-- 보도자료 메일 (기자 본인만)
+CREATE TABLE IF NOT EXISTS mail_accounts (
+  user_id INTEGER PRIMARY KEY REFERENCES users(id),
+  host TEXT NOT NULL,
+  username TEXT NOT NULL,
+  secret_enc TEXT NOT NULL,
+  folder TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  last_uid INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS mails (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  uid INTEGER NOT NULL,
+  sender TEXT,
+  subject TEXT,
+  sent_at TEXT,
+  embargo TEXT,
+  body TEXT,
+  summary TEXT,
+  first_seen_at TEXT NOT NULL,
+  UNIQUE(user_id, uid)
+);
+-- 자사 기사 (스타일북·유사 기사 검색용)
+CREATE TABLE IF NOT EXISTS articles (
+  idxno INTEGER PRIMARY KEY,
+  title TEXT NOT NULL,
+  author TEXT,
+  author_id TEXT,
+  section TEXT,
+  published_at TEXT,
+  body TEXT NOT NULL,
+  url TEXT NOT NULL,
+  fetched_at TEXT NOT NULL
+);
+CREATE VIRTUAL TABLE IF NOT EXISTS articles_fts USING fts5(title, body, tokenize='trigram');
+CREATE TABLE IF NOT EXISTS stylebooks (
+  user_id INTEGER PRIMARY KEY REFERENCES users(id),
+  content TEXT NOT NULL,
+  source_count INTEGER NOT NULL DEFAULT 0,
+  model TEXT,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS drafts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  source_kind TEXT NOT NULL,      -- disclosure | mail | text
+  source_ref TEXT,
+  source_title TEXT,
+  source_text TEXT NOT NULL,
+  draft TEXT NOT NULL,
+  checks_json TEXT NOT NULL,
+  examples_json TEXT NOT NULL,
+  model TEXT,
+  created_at TEXT NOT NULL
+);
+-- 질문 답변
+CREATE TABLE IF NOT EXISTS chats (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  question TEXT NOT NULL,
+  answer TEXT NOT NULL,
+  trace_json TEXT NOT NULL,
+  model TEXT,
+  created_at TEXT NOT NULL
+);
+-- 정기 브리핑 (하루 3~4회, 조용히)
+CREATE TABLE IF NOT EXISTS briefings (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  slot TEXT UNIQUE NOT NULL,
+  content TEXT NOT NULL,
+  model TEXT,
+  created_at TEXT NOT NULL
+);
+-- AI 사용량 (비용 한도·월간 리포트)
+CREATE TABLE IF NOT EXISTS llm_usage (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER,
+  at TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  model TEXT NOT NULL,
+  purpose TEXT NOT NULL,
+  input_tokens INTEGER NOT NULL,
+  output_tokens INTEGER NOT NULL,
+  cost_krw REAL NOT NULL
+);
 """
+
+# 기존 DB에 나중에 추가한 열 (없으면 ALTER TABLE)
+MIGRATIONS = [
+    ("disclosures", "source", "TEXT NOT NULL DEFAULT 'dart'"),
+    ("disclosures", "link", "TEXT"),
+    ("claims", "written_url", "TEXT"),
+    ("claims", "written_at", "TEXT"),
+    ("users", "reporter_id", "TEXT"),
+    ("users", "monthly_limit_krw", "INTEGER"),
+]
 
 
 def now() -> datetime:
@@ -107,6 +223,10 @@ class Database:
             self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.execute("PRAGMA foreign_keys=ON")
             self._conn.executescript(SCHEMA)
+            for table, column, decl in MIGRATIONS:
+                cols = {r[1] for r in self._conn.execute(f"PRAGMA table_info({table})")}
+                if column not in cols:
+                    self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
 
     @contextmanager
     def tx(self) -> Iterator[sqlite3.Connection]:
