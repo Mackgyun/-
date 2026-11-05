@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0b4a8b">
+  <title>청년의사 브리핑</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/static/icon-192.png">
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#main">본문으로 건너뛰기</a>
+
+  <!-- 로그인 / 가입 -->
+  <section id="auth" class="auth" hidden>
+    <div class="auth-card">
+      <div class="brand"><span class="brand-mark" aria-hidden="true">청</span><span>청년의사 브리핑</span></div>
+      <form id="login-form" class="stack">
+        <h1>로그인</h1>
+        <label>아이디<input name="username" autocomplete="username" required></label>
+        <label>비밀번호<input name="password" type="password" autocomplete="current-password" required></label>
+        <button class="btn primary" type="submit">로그인</button>
+        <p class="muted small">계정은 관리자에게 받은 초대 링크로 만듭니다.</p>
+      </form>
+      <form id="join-form" class="stack" hidden>
+        <h1>초대받은 계정 만들기</h1>
+        <label>이름 (화면에 표시)<input name="display_name" required maxlength="40" placeholder="홍길동"></label>
+        <label>아이디 (영문·숫자)<input name="username" required pattern="[A-Za-z0-9._-]{2,32}" autocomplete="username"></label>
+        <label>비밀번호 (10자 이상)<input name="password" type="password" minlength="10" required autocomplete="new-password"></label>
+        <button class="btn primary" type="submit">계정 만들기</button>
+      </form>
+      <p id="auth-error" class="error" role="alert"></p>
+    </div>
+  </section>
+
+  <!-- 앱 -->
+  <div id="app" class="shell" hidden>
+    <aside class="sidebar" aria-label="메뉴">
+      <div class="brand"><span class="brand-mark" aria-hidden="true">청</span><span>브리핑</span></div>
+      <nav class="nav">
+        <a href="#feed" data-view="feed" class="nav-item"><span aria-hidden="true">◎</span>피드</a>
+        <a href="#mine" data-view="mine" class="nav-item"><span aria-hidden="true">✓</span>내가 맡은 건</a>
+        <a href="#settings" data-view="settings" class="nav-item"><span aria-hidden="true">⚙</span>내 설정</a>
+        <a href="#admin" data-view="admin" class="nav-item admin-only" hidden><span aria-hidden="true">⌂</span>관리자</a>
+      </nav>
+      <div class="sidebar-foot">
+        <div id="status-dot" class="status" title="수집 상태"><span class="dot"></span><span class="status-text">확인 중</span></div>
+        <button id="theme-btn" class="btn ghost small" type="button" aria-label="화면 테마 바꾸기">테마</button>
+        <button id="logout-btn" class="btn ghost small" type="button">로그아웃</button>
+      </div>
+    </aside>
+
+    <header class="topbar">
+      <div class="search">
+        <input id="search" type="search" placeholder="기업명·공시 제목 검색  ( / )" aria-label="공시 검색">
+      </div>
+      <div class="filters" role="group" aria-label="등급 필터">
+        <button class="chip" data-level="" aria-pressed="true">전체</button>
+        <button class="chip" data-level="red" aria-pressed="false"><span class="lv lv-red" aria-hidden="true">●</span>중요</button>
+        <button class="chip" data-level="yellow" aria-pressed="false"><span class="lv lv-yellow" aria-hidden="true">●</span>일반</button>
+        <button class="chip" data-watched="1" aria-pressed="false">★ 감시 기업</button>
+      </div>
+      <button id="push-btn" class="btn primary small" type="button" hidden>PC·폰 알림 켜기</button>
+    </header>
+
+    <main id="main" class="main" tabindex="-1">
+      <!-- 피드 -->
+      <section id="view-feed" class="view">
+        <div id="mode-banner" class="banner" hidden></div>
+        <div class="bento" id="briefing" aria-live="polite"></div>
+        <div class="feed-head">
+          <h2 id="feed-title">오늘의 피드</h2>
+          <span class="muted small kbd-hint">J/K 이동 · Enter 열기 · C 담당 · / 검색</span>
+        </div>
+        <ul id="feed" class="feed" role="listbox" aria-label="공시 목록"></ul>
+        <button id="more-btn" class="btn ghost" type="button" hidden>더 보기</button>
+        <p id="empty" class="empty" hidden></p>
+      </section>
+
+      <!-- 설정 -->
+      <section id="view-settings" class="view" hidden>
+        <h2>내 설정</h2>
+        <div class="card stack">
+          <h3>알림 받을 공시</h3>
+          <p class="muted small">중요(빨강) 공시 가운데 아래에 해당하는 것만 팝업으로 받습니다. 일반 공시는 피드에만 쌓입니다.</p>
+          <div id="subs" class="tags"></div>
+          <form id="sub-form" class="row">
+            <select name="kind" aria-label="종류">
+              <option value="company">기업</option>
+              <option value="keyword">키워드</option>
+              <option value="watch">감시 기업 전체</option>
+              <option value="all">보건의료 전체</option>
+            </select>
+            <input name="value" placeholder="예: 유한양행, 기술이전" aria-label="기업명 또는 키워드">
+            <button class="btn" type="submit">추가</button>
+          </form>
+        </div>
+        <div class="card stack">
+          <h3>이 기기 알림</h3>
+          <p id="push-state" class="muted small"></p>
+          <div class="row">
+            <button id="push-enable" class="btn primary" type="button">이 기기에서 알림 받기</button>
+            <button id="push-test" class="btn" type="button">테스트 알림 보내기</button>
+          </div>
+          <p class="muted small">아이폰은 Safari 공유 버튼 → '홈 화면에 추가'로 설치한 뒤 그 앱에서 알림을 켜야 합니다.</p>
+        </div>
+        <div class="card stack">
+          <h3>화면</h3>
+          <label class="row">글자 크기
+            <input id="font-size" type="range" min="14" max="20" step="1" aria-label="글자 크기">
+          </label>
+        </div>
+      </section>
+
+      <!-- 관리자 -->
+      <section id="view-admin" class="view" hidden>
+        <h2>관리자</h2>
+        <div class="card stack">
+          <h3>수집 상태</h3>
+          <dl id="admin-status" class="kv"></dl>
+        </div>
+        <div class="card stack">
+          <h3>기자 초대</h3>
+          <div class="row">
+            <button id="invite-btn" class="btn primary" type="button">초대 링크 만들기</button>
+            <input id="invite-url" readonly aria-label="초대 링크" placeholder="버튼을 누르면 링크가 생깁니다">
+          </div>
+          <p class="muted small">링크는 7일간 1번만 쓸 수 있습니다. 메신저나 메일로 직접 전달하세요.</p>
+        </div>
+        <div class="card stack">
+          <h3>사용자</h3>
+          <table class="table"><thead><tr><th>이름</th><th>아이디</th><th>권한</th><th>상태</th><th></th></tr></thead>
+            <tbody id="users"></tbody></table>
+        </div>
+        <div class="card stack">
+          <h3>최근 기록</h3>
+          <ol id="events" class="events"></ol>
+        </div>
+      </section>
+    </main>
+
+    <!-- 상세 -->
+    <aside id="detail" class="detail" aria-label="공시 상세" hidden>
+      <div class="detail-inner"></div>
+    </aside>
+
+    <!-- 질문창 (3~4주차에 연결) -->
+    <form id="ask" class="ask" autocomplete="off">
+      <input id="ask-input" placeholder="질문하기 (Ctrl+K) · 예: 오늘 기술이전 공시 있어?" aria-label="질문">
+      <button class="btn primary" type="submit">묻기</button>
+    </form>
+
+    <nav class="tabbar" aria-label="하단 메뉴">
+      <a href="#feed" data-view="feed">피드</a>
+      <a href="#mine" data-view="mine">담당</a>
+      <a href="#settings" data-view="settings">설정</a>
+      <a href="#admin" data-view="admin" class="admin-only" hidden>관리</a>
+    </nav>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+</body>
+</html>
