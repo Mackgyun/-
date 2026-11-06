@@ -237,25 +237,32 @@ class AlioCollector:
     async def poll(self) -> list[dict]:
         orgs = await self.resolve_orgs()
         items = await self.resolve_items()
-        bootstrap = self.db.get("alio_bootstrapped") != "1"
+        # 기관·항목 조합마다 처음 수집한 공시는 '과거 공시'로 보고 알림 없이 저장한다.
+        # (설정에 기관이나 항목을 새로 추가해도 과거 공시가 알림으로 쏟아지지 않게)
+        seen = set(json.loads(self.db.get("alio_seen_pairs", "[]") or "[]"))
+        if self.db.get("alio_bootstrapped") == "1" and not seen:  # 이전 버전에서 넘어온 경우
+            seen = {f"{o['apba_id']}:{i['root']}" for o in orgs for i in items}
         new_rows: list[dict] = []
         for org in orgs:
             for item in items:
+                pair = f"{org['apba_id']}:{item['root']}"
+                first = pair not in seen
                 try:
                     results = await self.client.susi(item["root"], org["apba_id"])
                 except (httpx.HTTPError, ValueError) as e:
                     self.db.log("error", f"alio {org['name']} {item['name']}: {e!r}")
                     continue
                 for v in results:
-                    row = await self._ingest(org, item, v)
-                    if row:
+                    row = await self._ingest(org, item, v, quiet=first)
+                    if row and not first:
                         new_rows.append(row)
-        if bootstrap:
-            self.db.set("alio_bootstrapped", "1")
+                seen.add(pair)
+        self.db.set("alio_seen_pairs", json.dumps(sorted(seen)))
+        self.db.set("alio_bootstrapped", "1")
         self.db.set("alio_last_poll_at", now_iso())
-        return [] if bootstrap else new_rows
+        return new_rows
 
-    async def _ingest(self, org: dict, item: dict, v: dict) -> dict | None:
+    async def _ingest(self, org: dict, item: dict, v: dict, quiet: bool = False) -> dict | None:
         ref = (v.get("disclosureNo") or str(v.get("idx") or "")).strip()
         if not ref:
             return None
@@ -272,12 +279,13 @@ class AlioCollector:
             "rcept_dt": idate or now().strftime("%Y%m%d"), "flr_nm": org["name"], "rm": None,
             "level": item["level"], "keyword": item["name"], "is_correction": 0, "watched": 1,
             "first_seen_at": now_iso(), "source": "alio", "link": link,
+            "alerted_at": "bootstrap" if quiet else None,
         }
         self.db.execute(
             """INSERT OR IGNORE INTO disclosures(rcept_no, corp_code, corp_name, stock_code, report_nm, rcept_dt,
-               flr_nm, rm, level, keyword, is_correction, watched, first_seen_at, source, link)
+               flr_nm, rm, level, keyword, is_correction, watched, first_seen_at, source, link, alerted_at)
                VALUES(:rcept_no,:corp_code,:corp_name,:stock_code,:report_nm,:rcept_dt,:flr_nm,:rm,:level,:keyword,
-                      :is_correction,:watched,:first_seen_at,:source,:link)""", row)
+                      :is_correction,:watched,:first_seen_at,:source,:link,:alerted_at)""", row)
         if item.get("finance") and disclosure_no:
             await self._finance(org, item, v, disclosure_no)
         return row

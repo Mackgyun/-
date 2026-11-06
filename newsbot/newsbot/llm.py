@@ -9,6 +9,8 @@
 from __future__ import annotations
 
 import json
+import threading
+from contextlib import contextmanager
 import logging
 from dataclasses import dataclass, field
 from typing import Any, Callable
@@ -142,18 +144,26 @@ class ClaudeBackend:
         return "답변을 만들지 못했습니다. 기업명이나 기간을 좁혀 다시 질문하세요.", trace, usages
 
 
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
+
+
 class OpenAIBackend:
+    """OpenAI 및 OpenAI 호환 API(Gemini 무료 등급, 로컬 Ollama)."""
+
     name = "openai"
 
-    def __init__(self, api_key: str, client=None):
+    def __init__(self, api_key: str, client=None, base_url: str | None = None, name: str = "openai"):
+        self.name = name
         if client is None:
             import openai
 
-            client = openai.OpenAI(api_key=api_key, max_retries=3, timeout=180.0)
+            client = openai.OpenAI(api_key=api_key, base_url=base_url, max_retries=3, timeout=180.0)
         self.client = client
+        # OpenAI 최신 모델은 max_completion_tokens, 호환 API는 max_tokens 를 받는다
+        self.token_param = "max_completion_tokens" if name == "openai" else "max_tokens"
 
     def _call(self, model, messages, tools, tier):
-        kwargs = dict(model=model, messages=messages, max_completion_tokens=MAX_TOKENS[tier])
+        kwargs = {"model": model, "messages": messages, self.token_param: MAX_TOKENS[tier]}
         if tools:
             kwargs["tools"] = [{"type": "function", "function": {
                 "name": t.name, "description": t.description, "parameters": t.schema}} for t in tools]
@@ -190,11 +200,26 @@ class OpenAIBackend:
         return "답변을 만들지 못했습니다. 기업명이나 기간을 좁혀 다시 질문하세요.", trace, usages
 
 
+def _fail_message(e: Exception, provider: str) -> str:
+    kind = type(e).__name__
+    if "RateLimit" in kind:
+        if provider == "gemini":
+            return "Gemini 무료 사용량(분당·하루 요청 수)을 넘었습니다. 잠시 뒤 다시 시도하세요."
+        return "AI 사용량 한도를 넘었습니다. 잠시 뒤 다시 시도하세요."
+    if provider == "ollama" and "Connection" in kind:
+        return "이 PC의 Ollama가 실행 중이 아닙니다. Ollama를 켜고 모델을 받았는지 확인하세요."
+    if "Authentication" in kind or "PermissionDenied" in kind:
+        return "AI 인증키가 맞지 않습니다. .env 의 키를 확인하세요."
+    return f"AI 호출에 실패했습니다 ({kind})."
+
+
 class LLM:
     def __init__(self, settings: Settings, db: Database, backend=None):
         self.settings = settings
         self.db = db
         self._backend = backend
+        self._locks: dict[int, threading.Lock] = {}
+        self._locks_guard = threading.Lock()
 
     @property
     def available(self) -> bool:
@@ -205,18 +230,26 @@ class LLM:
         if self._backend is None:
             if not self.settings.llm_ready:
                 raise LLMError("AI 인증키가 등록되지 않았습니다. 관리자가 .env에 등록하면 사용할 수 있습니다.")
-            if self.settings.llm_provider == "claude":
+            p = self.settings.llm_provider
+            if p == "claude":
                 self._backend = ClaudeBackend(self.settings.anthropic_api_key)
+            elif p == "gemini":
+                self._backend = OpenAIBackend(self.settings.gemini_api_key, base_url=GEMINI_URL, name="gemini")
+            elif p == "ollama":
+                self._backend = OpenAIBackend("ollama", base_url=self.settings.ollama_url, name="ollama")
             else:
                 self._backend = OpenAIBackend(self.settings.openai_api_key)
         return self._backend
 
     def model_for(self, tier: str) -> str:
-        models = self.settings.openai_models if self.backend.name == "openai" else self.settings.claude_models
+        models = {"openai": self.settings.openai_models, "gemini": self.settings.gemini_models,
+                  "ollama": self.settings.ollama_models}.get(self.backend.name, self.settings.claude_models)
         return models[tier]
 
     # --- 비용 -----------------------------------------------------------
     def cost_krw(self, model: str, usage: Usage) -> float:
+        if self._backend is not None and getattr(self._backend, "name", "") in ("gemini", "ollama"):
+            return 0.0  # 무료 등급·로컬 모델
         pin, pout = PRICES_USD.get(model, UNKNOWN_PRICE)
         usd = (usage.input_tokens * pin + usage.cache_write * pin * 1.25 + usage.cache_read * pin * 0.1
                + usage.output_tokens * pout) / 1_000_000
@@ -233,8 +266,26 @@ class LLM:
 
     def limit_for(self, user_id: int) -> int:
         row = self.db.one("SELECT monthly_limit_krw FROM users WHERE id=?", (user_id,))
-        return int(row["monthly_limit_krw"]) if row and row["monthly_limit_krw"] else \
-            self.settings.default_monthly_limit_krw
+        # 0원은 '사용 금지'이므로 None 일 때만 기본값을 쓴다
+        if row and row["monthly_limit_krw"] is not None:
+            return int(row["monthly_limit_krw"])
+        return self.settings.default_monthly_limit_krw
+
+    @contextmanager
+    def _slot(self, user_id: int | None):
+        """기자 한 명당 동시에 한 요청만. 동시에 여러 요청을 보내 한도를 넘기는 것을 막는다."""
+        if user_id is None:
+            yield
+            return
+        with self._locks_guard:
+            lock = self._locks.setdefault(user_id, threading.Lock())
+        if not lock.acquire(blocking=False):
+            raise LLMError("앞선 AI 요청을 처리하고 있습니다. 끝난 뒤 다시 시도하세요.")
+        try:
+            self._check_budget(user_id)
+            yield
+        finally:
+            lock.release()
 
     def _check_budget(self, user_id: int | None) -> None:
         if user_id is None:
@@ -252,7 +303,10 @@ class LLM:
 
     # --- 호출 -----------------------------------------------------------
     def complete(self, system: str, prompt: str, tier: str, user_id: int | None, purpose: str) -> tuple[str, str]:
-        self._check_budget(user_id)
+        with self._slot(user_id):
+            return self._complete(system, prompt, tier, user_id, purpose)
+
+    def _complete(self, system, prompt, tier, user_id, purpose) -> tuple[str, str]:
         model = self.model_for(tier)
         try:
             text, usages = self.backend.complete(model, system, prompt, tier)
@@ -260,13 +314,16 @@ class LLM:
             raise
         except Exception as e:  # noqa: BLE001
             log.exception("llm complete failed")
-            raise LLMError(f"AI 호출에 실패했습니다 ({type(e).__name__}).") from e
+            raise LLMError(_fail_message(e, self.settings.llm_provider)) from e
         self._record(user_id, model, purpose, usages)
         return text, model
 
     def agent(self, system: str, history: list[dict], tools: list[Tool], tier: str, user_id: int | None,
               purpose: str, max_steps: int = 6) -> AgentResult:
-        self._check_budget(user_id)
+        with self._slot(user_id):
+            return self._agent(system, history, tools, tier, user_id, purpose, max_steps)
+
+    def _agent(self, system, history, tools, tier, user_id, purpose, max_steps) -> AgentResult:
         model = self.model_for(tier)
         try:
             text, trace, usages = self.backend.agent(model, system, history, tools, tier, max_steps)
@@ -274,6 +331,6 @@ class LLM:
             raise
         except Exception as e:  # noqa: BLE001
             log.exception("llm agent failed")
-            raise LLMError(f"AI 호출에 실패했습니다 ({type(e).__name__}).") from e
+            raise LLMError(_fail_message(e, self.settings.llm_provider)) from e
         self._record(user_id, model, purpose, usages)
         return AgentResult(text=text, trace=trace, model=model)

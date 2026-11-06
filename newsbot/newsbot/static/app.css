@@ -411,6 +411,14 @@ details.card summary { cursor: pointer; font-weight: 600; }
   .tabbar a[aria-current="page"] { color: var(--accent); }
   .ask-view .composer { position: sticky; bottom: calc(70px + env(safe-area-inset-bottom)); }
   .fin, .table { display: block; overflow-x: auto; white-space: nowrap; }
+  /* 사용자 표는 휴대폰에서 줄마다 세로로 (버튼이 화면 밖으로 나가지 않게) */
+  .table.users-table { white-space: normal; overflow: visible; }
+  .users-table thead { display: none; }
+  .users-table tbody, .users-table tr, .users-table td { display: block; }
+  .users-table tr { padding: var(--s2) 0; border-bottom: 1px solid var(--line); }
+  .users-table tr:last-child { border-bottom: 0; }
+  .users-table td { border: 0; padding: 2px 0; }
+  .users-table td:first-child { font-weight: 650; }
   .today .story { font-size: 1rem; }
   .figures { font-size: .8rem; line-height: 1.7; }
   .figures .sep { margin: 0 6px; }

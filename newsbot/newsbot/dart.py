@@ -13,7 +13,7 @@ import logging
 import re
 import zipfile
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import httpx
 
@@ -26,6 +26,7 @@ BASE = "https://opendart.fss.or.kr/api"
 VIEW_URL = "https://dart.fss.or.kr/dsaf001/main.do?rcpNo={rcept_no}"
 PAGE_COUNT = 100
 FULL_SCAN_MAX_PAGES = 50
+CATCH_UP_DAYS = 7
 
 
 class DartError(Exception):
@@ -36,6 +37,14 @@ class DartError(Exception):
 
 class DartLimitReached(DartError):
     pass
+
+
+_KEY_RE = re.compile(r"(crtfc_key=)[^&\s'\"]+")
+
+
+def redact(text: str) -> str:
+    """오류 문구·로그에서 인증키를 가린다."""
+    return _KEY_RE.sub(r"\1***", str(text))
 
 
 class DartClient:
@@ -51,13 +60,25 @@ class DartClient:
     def calls_today(self) -> int:
         return int(self.db.get(self._count_key(), "0") or 0)
 
-    async def _get(self, path: str, params: dict) -> dict:
+    async def _fetch(self, path: str, params: dict) -> httpx.Response:
+        """호출 수를 세고 요청한다. 오류 문구에 인증키가 든 URL이 섞이지 않게 바꿔 던진다."""
         if self.calls_today() >= self.daily_limit:
             raise DartLimitReached("LOCAL", f"오늘 호출 {self.daily_limit}건 한도 도달")
         self.db.set(self._count_key(), str(self.calls_today() + 1))
-        resp = await self.http.get(f"{BASE}/{path}", params={"crtfc_key": self.api_key, **params})
-        resp.raise_for_status()
-        data = resp.json()
+        try:
+            resp = await self.http.get(f"{BASE}/{path}", params={"crtfc_key": self.api_key, **params})
+        except httpx.HTTPError as e:
+            raise DartError("NET", f"{path} 연결 실패 ({type(e).__name__})") from None
+        if resp.status_code >= 400:
+            raise DartError(f"HTTP{resp.status_code}", f"{path} 응답 오류")
+        return resp
+
+    async def _get(self, path: str, params: dict) -> dict:
+        resp = await self._fetch(path, params)
+        try:
+            data = resp.json()
+        except ValueError:
+            raise DartError("JSON", f"{path} 응답을 읽지 못했습니다") from None
         status = str(data.get("status", ""))
         if status == "020":
             raise DartLimitReached(status, data.get("message", "요청 제한 초과"))
@@ -76,11 +97,7 @@ class DartClient:
 
     async def document_text(self, rcept_no: str, limit: int = 15000) -> str:
         """공시 원문(zip 안의 XML)을 글자만 뽑아 돌려준다. 초안·질문의 근거 자료용."""
-        if self.calls_today() >= self.daily_limit:
-            raise DartLimitReached("LOCAL", "오늘 호출 한도 도달")
-        self.db.set(self._count_key(), str(self.calls_today() + 1))
-        resp = await self.http.get(f"{BASE}/document.xml", params={"crtfc_key": self.api_key, "rcept_no": rcept_no})
-        resp.raise_for_status()
+        resp = await self._fetch("document.xml", {"rcept_no": rcept_no})
         if not resp.content.startswith(b"PK"):
             raise DartError("DOC", "원문을 받지 못했습니다")
         texts = []
@@ -111,9 +128,7 @@ class DartClient:
             return row["corp_code"]
         path = Path(cache_path)
         if not path.exists() or time.time() - path.stat().st_mtime > 7 * 86400:
-            self.db.set(self._count_key(), str(self.calls_today() + 1))
-            resp = await self.http.get(f"{BASE}/corpCode.xml", params={"crtfc_key": self.api_key})
-            resp.raise_for_status()
+            resp = await self._fetch("corpCode.xml", {})
             with zipfile.ZipFile(io.BytesIO(resp.content)) as z:
                 xml = z.read(z.namelist()[0]).decode("utf-8", errors="replace")
             mapping = {}
@@ -164,13 +179,25 @@ class Collector:
 
     async def poll(self, full: bool = False) -> PollResult:
         today = now()
-        bgn = (today - timedelta(days=1)).strftime("%Y%m%d")
+        bgn_dt = today - timedelta(days=1)
+        # 노트북이 꺼져 있었으면 마지막으로 성공한 날부터 이어서 훑는다 (최대 7일)
+        last_ok = self.db.get("dart_last_ok_date")
+        if last_ok:
+            try:
+                last = datetime.strptime(last_ok, "%Y%m%d").replace(tzinfo=today.tzinfo)
+                if last.date() < bgn_dt.date():
+                    bgn_dt = max(last, today - timedelta(days=CATCH_UP_DAYS))
+                    full = True
+            except ValueError:
+                pass
+        bgn = bgn_dt.strftime("%Y%m%d")
         end = today.strftime("%Y%m%d")
+        days = (today.date() - bgn_dt.date()).days + 1
         bootstrap = self.db.get("bootstrapped") != "1"
 
         new: list[dict] = []
         pages = scanned = 0
-        max_pages = FULL_SCAN_MAX_PAGES if (full or bootstrap) else self.rescan_pages
+        max_pages = FULL_SCAN_MAX_PAGES * max(1, days // 2) if (full or bootstrap) else self.rescan_pages
         page_no = 1
         while page_no <= max_pages:
             data = await self.client.list_page(bgn, end, page_no)
@@ -178,7 +205,7 @@ class Collector:
             items = data.get("list") or []
             for item in items:
                 scanned += 1
-                row = await self._ingest(item)
+                row = await self._ingest(item, quiet=bootstrap)
                 if row:
                     new.append(row)
             total_page = int(data.get("total_page") or 0)
@@ -189,9 +216,11 @@ class Collector:
         if bootstrap:
             self.db.set("bootstrapped", "1")
         self.db.set("last_poll_at", now_iso())
+        if full or bootstrap:
+            self.db.set("dart_last_ok_date", end)
         return PollResult(new=new, pages=pages, scanned=scanned, bootstrap=bootstrap)
 
-    async def _ingest(self, item: dict) -> dict | None:
+    async def _ingest(self, item: dict, quiet: bool = False) -> dict | None:
         rcept_no = item.get("rcept_no")
         if not rcept_no:
             return None
@@ -221,13 +250,14 @@ class Collector:
             "is_correction": int(c.is_correction),
             "watched": int(watched),
             "first_seen_at": now_iso(),
+            "alerted_at": "bootstrap" if quiet else None,
         }
         inserted = self.db.execute(
             """INSERT OR IGNORE INTO disclosures
                (rcept_no, corp_code, corp_name, stock_code, report_nm, rcept_dt, flr_nm, rm,
-                level, keyword, is_correction, watched, first_seen_at)
+                level, keyword, is_correction, watched, first_seen_at, alerted_at)
                VALUES (:rcept_no, :corp_code, :corp_name, :stock_code, :report_nm, :rcept_dt, :flr_nm, :rm,
-                       :level, :keyword, :is_correction, :watched, :first_seen_at)""",
+                       :level, :keyword, :is_correction, :watched, :first_seen_at, :alerted_at)""",
             row,
         )
         return row if inserted else None

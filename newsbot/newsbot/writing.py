@@ -82,8 +82,12 @@ def _digits(s: str) -> str:
 
 
 def check_numbers(draft: str, source: str) -> list[dict]:
-    """초안의 숫자가 원자료에 있는지 대조. 연도·날짜처럼 짧은 숫자도 포함한다."""
-    src = _digits(source)
+    """초안의 숫자가 원자료에 있는지 숫자 단위로 정확히 대조한다.
+
+    부분 문자열로 비교하면 원자료 '1,000억'에 초안 '100억', '2025'에 '25'가 일치로 잡히므로
+    원자료의 숫자를 하나씩 떼어 집합으로 만들고 같은 숫자가 있는지 본다.
+    """
+    src = {_digits(m.group(0)).rstrip(".") for m in _NUM.finditer(source)}
     out, seen = [], set()
     for m in _NUM.finditer(draft):
         raw = m.group(0)

@@ -26,7 +26,15 @@ def _bool(name: str, default: bool) -> bool:
 
 
 def _times(raw: str) -> tuple[str, ...]:
-    return tuple(t.strip() for t in raw.split(",") if t.strip())
+    out = []
+    for t in (x.strip() for x in raw.split(",")):
+        if not t:
+            continue
+        h, sep, m = t.partition(":")
+        if not (sep and h.isdigit() and m.isdigit() and 0 <= int(h) < 24 and 0 <= int(m) < 60):
+            raise SystemExit(f"DIGEST_TIMES 의 '{t}' 를 읽지 못했습니다. 08:00,13:00 처럼 시:분 으로 적어 주세요.")
+        out.append(f"{int(h):02d}:{int(m):02d}")
+    return tuple(out)
 
 
 @dataclass(frozen=True)
@@ -46,13 +54,20 @@ class Settings:
     dart_daily_call_limit: int = 18000
 
     # AI
-    llm_provider: str = ""  # claude | openai | "" (꺼짐)
+    llm_provider: str = ""  # claude | openai | gemini(무료 등급) | ollama(이 PC에서 실행, 무료) | "" (꺼짐)
     anthropic_api_key: str = ""
     openai_api_key: str = ""
+    gemini_api_key: str = ""
+    ollama_url: str = "http://localhost:11434/v1"
     claude_models: dict = field(default_factory=lambda: {
         "fast": "claude-haiku-5-5", "main": "claude-sonnet-5-5", "draft": "claude-opus-5-5"})
     openai_models: dict = field(default_factory=lambda: {
         "fast": "gpt-6-luna", "main": "gpt-6.1-sol", "draft": "gpt-6.1-sol"})
+    # Google AI Studio 무료 등급 (2026-11 요금표 기준 무료 모델)
+    gemini_models: dict = field(default_factory=lambda: {
+        "fast": "gemini-3.5-flash-lite", "main": "gemini-3.8-flash", "draft": "gemini-3.8-flash"})
+    ollama_models: dict = field(default_factory=lambda: {
+        "fast": "qwen3:8b", "main": "qwen3:8b", "draft": "qwen3:8b"})
     usd_krw: float = 1400.0
     default_monthly_limit_krw: int = 30000
 
@@ -76,8 +91,15 @@ class Settings:
 
     @property
     def llm_ready(self) -> bool:
-        return (self.llm_provider == "claude" and bool(self.anthropic_api_key)) or (
-            self.llm_provider == "openai" and bool(self.openai_api_key))
+        return ((self.llm_provider == "claude" and bool(self.anthropic_api_key))
+                or (self.llm_provider == "openai" and bool(self.openai_api_key))
+                or (self.llm_provider == "gemini" and bool(self.gemini_api_key))
+                or self.llm_provider == "ollama")
+
+    @property
+    def llm_free(self) -> bool:
+        """무료 등급·로컬 모델은 비용을 0원으로 기록한다."""
+        return self.llm_provider in ("gemini", "ollama")
 
 
 def load_settings(env_file: Path | None = None) -> Settings:
@@ -86,8 +108,8 @@ def load_settings(env_file: Path | None = None) -> Settings:
     if mode not in ("log", "notify"):
         raise SystemExit("ALERT_MODE 는 log 또는 notify 여야 합니다.")
     provider = os.getenv("LLM_PROVIDER", "").strip().lower()
-    if provider not in ("", "claude", "openai"):
-        raise SystemExit("LLM_PROVIDER 는 claude 또는 openai 여야 합니다.")
+    if provider not in ("", "claude", "openai", "gemini", "ollama"):
+        raise SystemExit("LLM_PROVIDER 는 claude, openai, gemini, ollama 중 하나여야 합니다.")
     db_path = _path(os.getenv("DB_PATH", "data/newsbot.db"))
     d = Settings()
     return Settings(
@@ -107,8 +129,12 @@ def load_settings(env_file: Path | None = None) -> Settings:
         llm_provider=provider,
         anthropic_api_key=os.getenv("ANTHROPIC_API_KEY", "").strip(),
         openai_api_key=os.getenv("OPENAI_API_KEY", "").strip(),
+        gemini_api_key=os.getenv("GEMINI_API_KEY", "").strip(),
+        ollama_url=os.getenv("OLLAMA_URL", "http://localhost:11434/v1").rstrip("/"),
         claude_models={k: os.getenv(f"CLAUDE_MODEL_{k.upper()}", v) for k, v in d.claude_models.items()},
         openai_models={k: os.getenv(f"OPENAI_MODEL_{k.upper()}", v) for k, v in d.openai_models.items()},
+        gemini_models={k: os.getenv(f"GEMINI_MODEL_{k.upper()}", v) for k, v in d.gemini_models.items()},
+        ollama_models={k: os.getenv(f"OLLAMA_MODEL_{k.upper()}", v) for k, v in d.ollama_models.items()},
         usd_krw=float(os.getenv("USD_KRW", "1400")),
         default_monthly_limit_krw=int(os.getenv("MONTHLY_LIMIT_KRW", "30000")),
         alio_enabled=_bool("ALIO_ENABLED", True),

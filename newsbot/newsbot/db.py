@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 import threading
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -208,7 +208,13 @@ MIGRATIONS = [
     ("claims", "written_at", "TEXT"),
     ("users", "reporter_id", "TEXT"),
     ("users", "monthly_limit_krw", "INTEGER"),
+    # 알림 발송 여부 (아웃박스). 기존 공시는 이미 처리된 것으로 본다.
+    ("disclosures", "alerted_at", "TEXT"),
 ]
+BACKFILL = {
+    ("disclosures", "alerted_at"): "UPDATE disclosures SET alerted_at='migrated' WHERE alerted_at IS NULL",
+}
+EVENT_KEEP_DAYS = 120
 
 
 def now() -> datetime:
@@ -234,6 +240,11 @@ class Database:
                 cols = {r[1] for r in self._conn.execute(f"PRAGMA table_info({table})")}
                 if column not in cols:
                     self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+                    if (table, column) in BACKFILL:
+                        self._conn.execute(BACKFILL[(table, column)])
+            self._conn.execute("CREATE INDEX IF NOT EXISTS idx_disc_pending ON disclosures(alerted_at) "
+                               "WHERE alerted_at IS NULL")
+            self._conn.execute("CREATE INDEX IF NOT EXISTS idx_events_kind_at ON events(kind, at)")
 
     @contextmanager
     def tx(self) -> Iterator[sqlite3.Connection]:
@@ -271,6 +282,20 @@ class Database:
         )
 
     def log(self, kind: str, detail: str = "") -> None:
-        self.execute("INSERT INTO events(at, kind, detail) VALUES(?,?,?)", (now_iso(), kind, detail[:2000]))
-        # 이벤트는 최근 5,000건만 보관
-        self.execute("DELETE FROM events WHERE id <= (SELECT MAX(id) - 5000 FROM events)")
+        with self._lock:
+            cur = self._conn.execute("INSERT INTO events(at, kind, detail) VALUES(?,?,?)",
+                                     (now_iso(), kind, detail[:2000]))
+            # 시범사업 지표(가동률·알림 수)를 기간으로 계산하므로 건수가 아니라 기간으로 보관한다
+            if cur.lastrowid % 200 == 0:
+                cutoff = (now() - timedelta(days=EVENT_KEEP_DAYS)).isoformat(timespec="seconds")
+                self._conn.execute("DELETE FROM events WHERE at < ?", (cutoff,))
+
+    def backup(self, dest: Path | str) -> Path:
+        """실행 중에도 안전한 복사본(VACUUM INTO). WAL 파일을 그대로 복사하면 깨질 수 있다."""
+        dest = Path(dest)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        if dest.exists():
+            dest.unlink()
+        with self._lock:
+            self._conn.execute("VACUUM INTO ?", (str(dest),))
+        return dest

@@ -12,19 +12,20 @@ from pathlib import Path
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from . import auth, mail, qa, writing
 from .alio import AlioClient, AlioCollector, AlioConfig, finance_overview, parse_tables
 from .articles import ArticleCollector
 from .config import KST, Settings
-from .dart import VIEW_URL, Collector, DartClient, DartLimitReached
+from .dart import VIEW_URL, Collector, DartClient, DartLimitReached, redact
 from .db import Database, now, now_iso
 from .llm import LLM, LLMError
-from .push import Pusher, payload_for, recipients
-from .rules import RED, Rules
+from .push import Alerter, Pusher
+from .rules import Rules
 
 log = logging.getLogger(__name__)
+logging.getLogger("httpx").setLevel(logging.WARNING)  # 요청 URL에 인증키가 들어 있어 INFO 로그를 끔
 STATIC = Path(__file__).resolve().parent / "static"
 COOKIE = "nb_session"
 
@@ -77,7 +78,7 @@ class ReporterIn(BaseModel):
 
 
 class MailAccountIn(BaseModel):
-    host: str = Field(default="imap.gmail.com", max_length=100)
+    host: str = Field(default="imap.gmail.com", max_length=100, pattern=r"^[A-Za-z0-9.-]+$")
     username: str = Field(min_length=3, max_length=120)
     password: str = Field(min_length=4, max_length=200)
     folder: str = Field(default="보도자료", min_length=1, max_length=100)
@@ -85,6 +86,14 @@ class MailAccountIn(BaseModel):
 
 class WrittenIn(BaseModel):
     url: str = Field(default="", max_length=500)
+
+    @field_validator("url")
+    @classmethod
+    def _http_only(cls, v: str) -> str:
+        v = v.strip()
+        if v and not v.lower().startswith(("http://", "https://")):
+            raise ValueError("기사 주소는 http:// 또는 https:// 로 시작해야 합니다.")
+        return v
 
 
 class LimitIn(BaseModel):
@@ -95,11 +104,11 @@ class LimitIn(BaseModel):
 class Poller:
     """DART 수집 루프."""
 
-    def __init__(self, settings: Settings, db: Database, rules: Rules, pusher: Pusher):
+    def __init__(self, settings: Settings, db: Database, rules: Rules, alerter: Alerter):
         self.settings = settings
         self.db = db
         self.rules = rules
-        self.pusher = pusher
+        self.alerter = alerter
         self.client = DartClient(settings.dart_api_key, db, settings.dart_daily_call_limit)
         self.collector = Collector(self.client, db, rules, settings.dart_rescan_pages)
         self._last_full = None
@@ -112,7 +121,14 @@ class Poller:
             await self.run_once()
             await asyncio.sleep(self.settings.poll_interval_sec)
 
+    def paused(self) -> bool:
+        until = self.db.get("dart_paused_until")
+        return bool(until) and now().isoformat(timespec="seconds") < until
+
     async def run_once(self) -> None:
+        if self.paused():  # 일일 한도 초과: 자정(한국 시간)까지 호출하지 않음
+            await self._flush()
+            return
         full = self._last_full is None or now() - self._last_full > timedelta(hours=1)
         try:
             result = await self.collector.poll(full=full)
@@ -122,64 +138,98 @@ class Poller:
             self.db.set("dart_fail_count", "0")
             self.db.log("poll", f"pages={result.pages} scanned={result.scanned} new={len(result.new)}"
                                 f"{' bootstrap' if result.bootstrap else ''}")
-            if not result.bootstrap:
-                await alert(self.settings, self.db, self.rules, self.pusher, result.new)
         except DartLimitReached as e:
-            self.db.set("dart_status", f"호출 한도 도달 ({e}) - 내일 다시 시작")
-            self.db.log("error", str(e))
+            tomorrow = (now() + timedelta(days=1)).replace(hour=0, minute=5, second=0, microsecond=0)
+            self.db.set("dart_paused_until", tomorrow.isoformat(timespec="seconds"))
+            self.db.set("dart_status", f"호출 한도 도달 ({redact(e)}) - {tomorrow:%m월 %d일 0시 5분}에 다시 시작")
+            self.db.log("error", redact(e))
         except Exception as e:  # noqa: BLE001 - 루프가 죽지 않게 모두 기록
             fails = int(self.db.get("dart_fail_count", "0") or 0) + 1
             self.db.set("dart_fail_count", str(fails))
-            self.db.set("dart_status", f"오류 {fails}회 연속: {e}")
-            self.db.log("error", f"poll: {e!r}")
-            log.exception("poll failed")
+            self.db.set("dart_status", f"오류 {fails}회 연속: {redact(e)[:200]}")
+            self.db.log("error", f"poll: {redact(repr(e))}")
+            log.error("poll failed: %s", redact(repr(e)))
+        await self._flush()
+
+    async def _flush(self) -> None:
+        """저장됐지만 아직 알리지 않은 공시를 보낸다 (수집이 실패한 회차에도)."""
+        try:
+            await self.alerter.flush()
+        except Exception as e:  # noqa: BLE001
+            self.db.log("error", f"alert: {e!r}")
+            log.exception("alert failed")
 
 
-async def alert(settings: Settings, db: Database, rules: Rules, pusher: Pusher, rows: list[dict]) -> None:
-    if not settings.notify_enabled:
-        return
-    for row in rows:
-        if row["level"] != RED or row["is_correction"]:
-            continue
-        payload = payload_for(row, settings.public_url)
-        for user_id in recipients(db, rules, row):
-            sent = await asyncio.to_thread(pusher.send_to_user, user_id, payload)
-            db.log("alert", f"{row['rcept_no']} -> user {user_id} ({sent} devices)")
-
-
-async def alio_loop(settings: Settings, db: Database, rules: Rules, pusher: Pusher, collector: AlioCollector):
+async def alio_loop(settings: Settings, db: Database, alerter: Alerter, collector: AlioCollector):
     while True:
         try:
             new = await collector.poll()
             db.set("alio_status", "정상")
             db.log("alio", f"new={len(new)}")
-            await alert(settings, db, rules, pusher, new)
         except Exception as e:  # noqa: BLE001
             hint = " (SSL 오류면 .env 에 ALIO_VERIFY_SSL=false)" if "SSL" in repr(e) or "certificate" in repr(e) else ""
-            db.set("alio_status", f"오류: {e}{hint}")
+            db.set("alio_status", f"오류: {str(e)[:200]}{hint}")
             db.log("error", f"alio: {e!r}")
             log.exception("alio poll failed")
+        try:
+            await alerter.flush()
+        except Exception as e:  # noqa: BLE001
+            db.log("error", f"alert: {e!r}")
         await asyncio.sleep(settings.alio_poll_hours * 3600)
 
 
-async def mail_loop(settings: Settings, db: Database, vault: mail.Vault):
+async def mail_loop(settings: Settings, db: Database, vault: mail.Vault, llm: LLM):
+    summarize = None
+    if settings.mail_ai_summary and llm.available:
+        def summarize(user_id: int, subject: str, body: str) -> str:
+            text, _ = llm.complete(mail.SUMMARY_SYSTEM, f"제목: {subject}\n\n{body[:6000]}", tier="fast",
+                                   user_id=user_id, purpose="mail_summary")
+            return text.strip()
     while True:
-        await asyncio.to_thread(mail.poll_all, db, vault)
+        try:
+            await asyncio.to_thread(mail.poll_all, db, vault, summarize)
+        except Exception as e:  # noqa: BLE001
+            db.log("error", f"mail loop: {e!r}")
+            log.exception("mail loop failed")
         await asyncio.sleep(settings.mail_poll_minutes * 60)
 
 
 async def digest_loop(settings: Settings, db: Database, llm: LLM):
     while True:
-        t = now()
-        for hhmm in settings.digest_times:
-            h, m = (int(x) for x in hhmm.split(":"))
-            due = t.replace(hour=h, minute=m, second=0, microsecond=0)
-            slot = due.strftime("%Y-%m-%d ") + hhmm
-            if due <= t < due + timedelta(minutes=30) and not db.one("SELECT 1 FROM briefings WHERE slot=?", (slot,)):
-                prev = db.one("SELECT created_at FROM briefings ORDER BY id DESC LIMIT 1")
-                since = prev["created_at"] if prev else (t - timedelta(hours=12)).isoformat(timespec="seconds")
-                await asyncio.to_thread(qa.make_digest, db, llm, slot, since)
+        try:
+            t = now()
+            for hhmm in settings.digest_times:
+                h, m = (int(x) for x in hhmm.split(":"))
+                due = t.replace(hour=h, minute=m, second=0, microsecond=0)
+                slot = due.strftime("%Y-%m-%d ") + hhmm
+                if due <= t < due + timedelta(minutes=30) and not db.one("SELECT 1 FROM briefings WHERE slot=?", (slot,)):
+                    prev = db.one("SELECT created_at FROM briefings ORDER BY id DESC LIMIT 1")
+                    since = prev["created_at"] if prev else (t - timedelta(hours=12)).isoformat(timespec="seconds")
+                    await asyncio.to_thread(qa.make_digest, db, llm, slot, since)
+            db.set("digest_checked_at", now_iso())
+        except Exception as e:  # noqa: BLE001 - 설정 오류 등으로 조용히 멈추지 않게 기록하고 계속
+            db.set("digest_status", f"오류: {str(e)[:200]}")
+            db.log("error", f"digest: {e!r}")
+            log.exception("digest failed")
         await asyncio.sleep(60)
+
+
+async def backup_loop(settings: Settings, db: Database, keep: int = 14):
+    """매일 새벽 4시 data/backups 에 DB 복사본(VACUUM INTO). 최근 keep 개만 남긴다."""
+    while True:
+        try:
+            t = now()
+            target = settings.data_dir / "backups" / f"newsbot-{t:%Y%m%d}.db"
+            if t.hour >= 4 and not target.exists():
+                await asyncio.to_thread(db.backup, target)
+                db.log("backup", str(target.name))
+                olds = sorted(target.parent.glob("newsbot-*.db"))[:-keep]
+                for old in olds:
+                    old.unlink(missing_ok=True)
+        except Exception as e:  # noqa: BLE001
+            db.log("error", f"backup: {e!r}")
+            log.exception("backup failed")
+        await asyncio.sleep(1800)
 
 
 # --- 앱 ---------------------------------------------------------------------
@@ -188,8 +238,10 @@ def create_app(settings: Settings, db: Database | None = None, start_poller: boo
     db = db or Database(settings.db_path)
     rules = Rules.load(settings.rules_path)
     pusher = Pusher(db, settings.data_dir, settings.vapid_contact, settings.notify_enabled)
+    alerter = Alerter(db, rules, pusher, settings.public_url, settings.notify_enabled)
     limiter = auth.LoginLimiter()
-    poller = Poller(settings, db, rules, pusher)
+    poller = Poller(settings, db, rules, alerter)
+    started_at = now()
     llm = llm or LLM(settings, db)
     vault = mail.Vault(settings.data_dir)
     alio_cfg = AlioConfig.load(settings.alio_path) if settings.alio_path.exists() else AlioConfig()
@@ -204,16 +256,18 @@ def create_app(settings: Settings, db: Database | None = None, start_poller: boo
         if start_poller:
             tasks.append(asyncio.create_task(poller.run_forever()))
             tasks.append(asyncio.create_task(digest_loop(settings, db, llm)))
+            tasks.append(asyncio.create_task(backup_loop(settings, db)))
             if settings.alio_enabled:
-                tasks.append(asyncio.create_task(alio_loop(settings, db, rules, pusher, alio_collector)))
+                tasks.append(asyncio.create_task(alio_loop(settings, db, alerter, alio_collector)))
             if settings.mail_enabled:
-                tasks.append(asyncio.create_task(mail_loop(settings, db, vault)))
+                tasks.append(asyncio.create_task(mail_loop(settings, db, vault, llm)))
         yield
         for t in tasks + list(jobs.values()):
             t.cancel()
 
     app = FastAPI(title="청년의사 브리핑", lifespan=lifespan, docs_url=None, redoc_url=None)
     app.state.db, app.state.settings, app.state.poller, app.state.pusher = db, settings, poller, pusher
+    app.state.alerter = alerter
     app.state.llm, app.state.alio = llm, alio_collector
 
     @app.middleware("http")
@@ -249,9 +303,18 @@ def create_app(settings: Settings, db: Database | None = None, start_poller: boo
         resp.set_cookie(COOKIE, token, httponly=True, samesite="lax", secure=settings.secure_cookies,
                         max_age=auth.SESSION_DAYS * 86400)
 
+    def client_ip(request: Request) -> str:
+        """같은 PC의 보안 터널(cloudflared 등)을 거쳐 온 요청은 터널이 붙인 원래 IP를 쓴다."""
+        host = request.client.host if request.client else ""
+        if host in ("127.0.0.1", "::1"):
+            fwd = request.headers.get("cf-connecting-ip") or request.headers.get("x-forwarded-for", "").split(",")[0]
+            if fwd.strip():
+                return fwd.strip()[:64]
+        return host
+
     @app.post("/api/login")
     def login(body: LoginIn, request: Request, response: Response):
-        key = f"{body.username.lower()}|{request.client.host if request.client else ''}"
+        key = f"{body.username.lower()}|{client_ip(request)}"
         if limiter.locked(key):
             raise HTTPException(429, "로그인 실패가 많아 10분 동안 잠겼습니다.")
         user = auth.authenticate(db, body.username, body.password)
@@ -312,6 +375,9 @@ def create_app(settings: Settings, db: Database | None = None, start_poller: boo
                      LEFT JOIN users u ON u.id=c.user_id"""
     SPLITS = ("inbox", "red", "beat", "alio", "unclaimed", "mine", "all")
 
+    def _like(text: str) -> str:
+        return "%" + text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+
     def _beat_sql(user_id: int) -> tuple[str, list]:
         """내 출입처: 구독(전체·감시 기업·기업·키워드)에 맞는 공시."""
         parts, params = [], []
@@ -324,8 +390,8 @@ def create_app(settings: Settings, db: Database | None = None, start_poller: boo
                 parts.append("REPLACE(d.corp_name,' ','')=?")
                 params.append("".join(sub["value"].split()))
             elif sub["kind"] == "keyword":
-                parts.append("REPLACE(d.report_nm,' ','') LIKE ?")
-                params.append("%" + "".join(sub["value"].split()) + "%")
+                parts.append("REPLACE(d.report_nm,' ','') LIKE ? ESCAPE '\\'")
+                params.append(_like("".join(sub["value"].split())))
         return ("(" + " OR ".join(parts) + ")" if parts else "0=1"), params
 
     def _split_where(split: str, user_id: int) -> tuple[list[str], list]:
@@ -362,22 +428,27 @@ def create_app(settings: Settings, db: Database | None = None, start_poller: boo
         if level in ("red", "yellow", "gray"):
             where.append("d.level=?")
             params.append(level)
-        elif not include_gray and split != "all":
+        elif not include_gray and split not in ("all", "mine"):
             where.append("d.level!='gray'")
         if source in ("dart", "alio"):
             where.append("d.source=?")
             params.append(source)
         if q:
-            where.append("(d.corp_name LIKE ? OR d.report_nm LIKE ?)")
-            params += [f"%{q}%", f"%{q}%"]
+            where.append("(d.corp_name LIKE ? ESCAPE '\\' OR d.report_nm LIKE ? ESCAPE '\\')")
+            params += [_like(q), _like(q)]
         if watched:
             where.append("d.watched=1")
         if mine:
             where.append("c.user_id=?")
             params.append(user["id"])
         if before:
-            where.append("d.first_seen_at < ?")
-            params.append(before)
+            seen_at, _, after_no = before.partition("|")
+            if after_no:
+                where.append("(d.first_seen_at < ? OR (d.first_seen_at = ? AND d.rcept_no < ?))")
+                params += [seen_at, seen_at, after_no]
+            else:
+                where.append("d.first_seen_at < ?")
+                params.append(seen_at)
         sql = (_feed_sql(user["id"]) + " WHERE " + " AND ".join(where)
                + " ORDER BY d.first_seen_at DESC, d.rcept_no DESC LIMIT ?")
         params.append(max(1, min(limit, 200)))
@@ -396,6 +467,8 @@ def create_app(settings: Settings, db: Database | None = None, start_poller: boo
 
     @app.post("/api/done/{rcept_no:path}")
     def mark_done(rcept_no: str, user: dict = Depends(current_user)):
+        if not db.one("SELECT 1 FROM disclosures WHERE rcept_no=?", (rcept_no,)):
+            raise HTTPException(404, "없는 공시입니다.")
         db.execute("INSERT OR IGNORE INTO triage(user_id, rcept_no, done_at) VALUES(?,?,?)",
                    (user["id"], rcept_no, now_iso()))
         return {"ok": True}
@@ -433,7 +506,7 @@ def create_app(settings: Settings, db: Database | None = None, start_poller: boo
             "red": counts.get("red", 0), "yellow": counts.get("yellow", 0), "gray": counts.get("gray", 0),
             "top": top, "unclaimed_top": sum(1 for t in top if not t["claimed_by"]), "my_claims": mine,
             "mails_today": mails_today, "briefing": brief,
-            "last_poll_at": db.get("last_poll_at"), "dart_status": db.get("dart_status", "대기 중"),
+            "last_poll_at": db.get("last_poll_at"), "dart_status": redact(db.get("dart_status", "대기 중")),
             "alio_status": db.get("alio_status", "대기 중") if settings.alio_enabled else "꺼짐",
             "alert_mode": settings.alert_mode,
         }
@@ -449,7 +522,7 @@ def create_app(settings: Settings, db: Database | None = None, start_poller: boo
     @app.post("/api/claims/{rcept_no:path}/written")
     def mark_written(rcept_no: str, body: WrittenIn, user: dict = Depends(current_user)):
         n = db.execute("UPDATE claims SET written_url=?, written_at=? WHERE rcept_no=? AND user_id=?",
-                       (body.url.strip() or None, now_iso(), rcept_no, user["id"]))
+                       (body.url or None, now_iso(), rcept_no, user["id"]))
         if not n:
             raise HTTPException(400, "담당으로 지정한 공시만 기사화로 기록할 수 있습니다.")
         return {"ok": True}
@@ -510,7 +583,9 @@ def create_app(settings: Settings, db: Database | None = None, start_poller: boo
                 raise HTTPException(400, "공시 원문을 불러오지 못했습니다. DART 인증키와 연결을 확인하거나 원자료를 직접 입력하세요.")
             text = meta + (f"\n원문:\n{doc}" if doc else "") + (f"\n\n기자 메모:\n{text}" if text else "")
         elif body.source_kind == "mail":
-            m = db.one("SELECT * FROM mails WHERE id=? AND user_id=?", (int(ref or 0), user["id"]))
+            if not (ref or "").isdigit():
+                raise HTTPException(400, "메일 번호가 올바르지 않습니다.")
+            m = db.one("SELECT * FROM mails WHERE id=? AND user_id=?", (int(ref), user["id"]))
             if not m:
                 raise HTTPException(404, "없는 메일입니다.")
             if not settings.mail_ai_summary:
@@ -602,8 +677,8 @@ def create_app(settings: Settings, db: Database | None = None, start_poller: boo
         sql = "SELECT id, sender, subject, sent_at, embargo, summary, first_seen_at FROM mails WHERE user_id=?"
         params: list = [user["id"]]
         if q:
-            sql += " AND (subject LIKE ? OR sender LIKE ?)"
-            params += [f"%{q}%", f"%{q}%"]
+            sql += " AND (subject LIKE ? ESCAPE '\\' OR sender LIKE ? ESCAPE '\\')"
+            params += [_like(q), _like(q)]
         return {"items": db.query(sql + " ORDER BY first_seen_at DESC LIMIT 100", tuple(params))}
 
     @app.get("/api/mail/{mail_id}")
@@ -638,7 +713,7 @@ def create_app(settings: Settings, db: Database | None = None, start_poller: boo
         imap = imaplib.IMAP4_SSL(acc["host"])
         try:
             imap.login(acc["username"], vault.open(acc["secret_enc"]))
-            status, _ = imap.select(f'"{acc["folder"]}"', readonly=True)
+            status, _ = imap.select(mail.quote_mailbox(acc["folder"]), readonly=True)
             if status != "OK":
                 raise RuntimeError(f"메일함 '{acc['folder']}'이 없습니다")
         finally:
@@ -719,7 +794,7 @@ def create_app(settings: Settings, db: Database | None = None, start_poller: boo
     @app.get("/api/admin/status")
     def admin_status(user: dict = Depends(admin_user)):
         return {
-            "dart_status": db.get("dart_status", "대기 중"),
+            "dart_status": redact(db.get("dart_status", "대기 중")),
             "last_poll_at": db.get("last_poll_at"),
             "dart_calls_today": poller.client.calls_today(),
             "alio_status": db.get("alio_status", "대기 중") if settings.alio_enabled else "꺼짐",
@@ -727,7 +802,11 @@ def create_app(settings: Settings, db: Database | None = None, start_poller: boo
             "llm": f"{settings.llm_provider} (준비됨)" if llm.available else "키 없음",
             "mail": "켜짐" if settings.mail_enabled else "꺼짐 (법무 검토 후)",
             "alert_mode": settings.alert_mode,
-            "events": db.query("SELECT at, kind, detail FROM events ORDER BY id DESC LIMIT 50"),
+            "digest_status": db.get("digest_status"),
+            "backups": sorted(p.name for p in (settings.data_dir / "backups").glob("newsbot-*.db"))[-3:]
+            if (settings.data_dir / "backups").exists() else [],
+            "events": [{**e, "detail": redact(e["detail"] or "")} for e in
+                       db.query("SELECT at, kind, detail FROM events ORDER BY id DESC LIMIT 50")],
         }
 
     @app.get("/api/admin/metrics")
@@ -757,13 +836,31 @@ def create_app(settings: Settings, db: Database | None = None, start_poller: boo
 
     @app.get("/healthz")
     def healthz():
-        """외부 감시 서비스용. 마지막 수집이 너무 오래되면 503."""
-        last = db.get("last_poll_at")
-        if settings.dart_api_key and last:
-            age = (now() - datetime.fromisoformat(last)).total_seconds()
-            if age > settings.poll_interval_sec * 4:
-                return JSONResponse({"ok": False, "last_poll_at": last}, status_code=503)
-        return {"ok": True, "last_poll_at": last}
+        """외부 감시 서비스용. 수집·브리핑이 멈췄으면 503과 문제 목록."""
+        problems = []
+        t = now()
+
+        def age(key: str) -> float | None:
+            v = db.get(key)
+            return (t - datetime.fromisoformat(v)).total_seconds() if v else None
+
+        uptime = (t - started_at).total_seconds()
+        if settings.dart_api_key and not poller.paused():
+            a = age("last_poll_at")
+            if (a is None and uptime > settings.poll_interval_sec * 4) or (a is not None and a > settings.poll_interval_sec * 4):
+                problems.append("dart")
+        if settings.alio_enabled and start_poller:
+            a = age("alio_last_poll_at")
+            limit = settings.alio_poll_hours * 3600 * 2 + 600
+            if (a is None and uptime > 1800) or (a is not None and a > limit):
+                problems.append("alio")
+        if start_poller:
+            a = age("digest_checked_at")
+            if (a is None and uptime > 600) or (a is not None and a > 600):
+                problems.append("digest")
+        body = {"ok": not problems, "problems": problems, "last_poll_at": db.get("last_poll_at"),
+                "dart": "no_key" if not settings.dart_api_key else ("paused" if poller.paused() else "on")}
+        return JSONResponse(body, status_code=503 if problems else 200)
 
     # --- 정적 파일 -------------------------------------------------------
     @app.get("/sw.js")

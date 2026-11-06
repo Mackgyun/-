@@ -156,6 +156,7 @@ function route() {
   }
   if (h === "draft") state.draftSource = null;
   if (h.startsWith("s/") && SPLITS[h.slice(2)]) {
+    closeDetail(true);  // 뒤로 가기·목록 이동이면 상세(휴대폰에서는 전체 화면)를 닫는다
     const changed = state.split !== h.slice(2) || state.view !== "list";
     state.split = h.slice(2);
     setView("list", h);
@@ -228,7 +229,8 @@ async function loadList(reset) {
     $("#list-title").textContent = SPLITS[state.split].title;
     $("#done-all").hidden = !["inbox", "red", "beat"].includes(state.split);
   }
-  const before = reset ? "" : state.items.at(-1)?.first_seen_at || "";
+  const lastItem = reset ? null : state.items.at(-1);
+  const before = lastItem ? `${lastItem.first_seen_at}|${lastItem.rcept_no}` : "";
   try {
     const { items } = await api(listQuery(before));
     state.items = reset ? items : [...state.items, ...items];
@@ -258,7 +260,8 @@ function bucketOf(it) {
 function rowFor(it, idx, fresh) {
   const lv = LV[it.level] || LV.yellow;
   const unread = state.lastVisit && new Date(it.first_seen_at) > state.lastVisit && !it.done_at;
-  const act = (label, title, fn) => el("button", { class: "icon-btn", type: "button", title, "aria-label": title,
+  // 행 안의 버튼은 마우스용. 키보드는 단축키(O·C·E)로 같은 동작을 하므로 탭 순서와 보조기술에서 뺀다
+  const act = (label, title, fn) => el("button", { class: "icon-btn", type: "button", title, tabindex: "-1", "aria-hidden": "true",
     onclick: (e) => { e.stopPropagation(); fn(); } }, label);
   const mine = it.claimed_by === state.me.id;
   return el("div", {
@@ -307,6 +310,7 @@ function select(idx, open) {
   if (idx < 0 || idx >= state.items.length) return;
   state.selected = idx;
   $$(".item").forEach((n) => n.setAttribute("aria-selected", n.id === `it-${idx}` ? "true" : "false"));
+  $("#feed").setAttribute("aria-activedescendant", `it-${idx}`);
   $(`#it-${idx}`)?.scrollIntoView({ block: "nearest" });
   if (open) location.hash = `#d/${encodeURIComponent(state.items[idx].rcept_no)}`;
   else if (state.detail) openDetail(state.items[idx].rcept_no, true);
@@ -328,6 +332,7 @@ $("#done-all").addEventListener("click", async () => {
   toast(`${r.done}건을 확인 처리했습니다.`, async () => {
     await Promise.all(ids.map((id) => api(`/api/done/${encodeURIComponent(id)}`, { method: "DELETE" })));
     await loadList(true);
+    if (state.items.length) select(0, false);
   });
 });
 
@@ -351,7 +356,7 @@ async function markDone(it) {
   try {
     await api(`/api/done/${encodeURIComponent(it.rcept_no)}`, { method: "POST" });
     loadCounts().catch(() => {});
-    toast("확인 처리했습니다.", async () => { await api(`/api/done/${encodeURIComponent(it.rcept_no)}`, { method: "DELETE" }); await loadList(true); });
+    toast("확인 처리했습니다.", async () => { await api(`/api/done/${encodeURIComponent(it.rcept_no)}`, { method: "DELETE" }); await refreshAfterChange(it.rcept_no); });
   } catch (e) { toast(e.message); loadList(true); }
 }
 
@@ -476,8 +481,9 @@ function commands(query) {
   ].filter(Boolean);
   const q = query.trim().toLowerCase();
   const hits = q ? list.filter((c) => c.label.toLowerCase().includes(q) || c.grp.includes(q)) : list;
-  if (q && state.me?.llm_ready) hits.unshift({ grp: "AI", label: `AI에게 질문: ${query.trim()}`, run: () => { location.hash = "#ask"; setTimeout(() => sendQuestion(query.trim()), 50); } });
   if (q) hits.push({ grp: "검색", label: `공시 검색: ${query.trim()}`, run: () => { $("#search").value = query.trim(); state.q = query.trim(); if (location.hash === "#s/all") loadList(true); else location.hash = "#s/all"; } });
+  // AI 질문은 비용이 드므로 맨 끝에 둔다 (Enter 한 번에 질문이 나가지 않게)
+  if (q && state.me?.llm_ready) hits.push({ grp: "AI", label: `AI에게 질문: ${query.trim()}`, run: () => { location.hash = "#ask"; setTimeout(() => sendQuestion(query.trim()), 50); } });
   return hits;
 }
 function renderPalette() {
@@ -529,7 +535,7 @@ $("#palette").addEventListener("click", (e) => { if (e.target.id === "palette") 
 
 // ---------- 키보드 ----------
 document.addEventListener("keydown", (e) => {
-  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { e.preventDefault(); $("#palette").hidden ? openPalette() : closePalette(); return; }
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k" && state.me && !$("#app").hidden) { e.preventDefault(); $("#palette").hidden ? openPalette() : closePalette(); return; }
   if (!$("#palette").hidden || !state.me || $("#app").hidden) return;
   if (e.key === "Escape") { if (isTyping()) document.activeElement.blur(); else closeDetail(); return; }
   if (isTyping() || e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;

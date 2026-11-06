@@ -4,14 +4,18 @@ $ErrorActionPreference = "Stop"
 $root = Resolve-Path (Join-Path $PSScriptRoot "..\..")
 Set-Location $root
 
-if (-not (Get-Command py -ErrorAction SilentlyContinue)) {
+# py 런처가 있으면 py -3, 없으면(Microsoft Store판 등) python 을 쓴다
+if (Get-Command py -ErrorAction SilentlyContinue) { $py = @("py", "-3") }
+elseif (Get-Command python -ErrorAction SilentlyContinue) { $py = @("python") }
+else {
     Write-Host "Python이 없습니다. https://www.python.org/downloads/ 에서 3.11 이상을 설치하고 'Add python.exe to PATH'를 체크한 뒤 다시 실행하세요." -ForegroundColor Red
     exit 1
 }
-py -3 -c "import sys; assert sys.version_info >= (3, 11), sys.version" 
+$pyExe = $py[0]; $pyArgs = @($py | Select-Object -Skip 1)
+& $pyExe @pyArgs -c "import sys; assert sys.version_info >= (3, 11), sys.version"
 if ($LASTEXITCODE -ne 0) { Write-Host "Python 3.11 이상이 필요합니다." -ForegroundColor Red; exit 1 }
 
-if (-not (Test-Path ".venv")) { py -3 -m venv .venv }
+if (-not (Test-Path ".venv")) { & $pyExe @pyArgs -m venv .venv }
 & .\.venv\Scripts\python.exe -m pip install --upgrade pip
 & .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 
