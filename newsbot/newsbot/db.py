@@ -68,6 +68,13 @@ CREATE TABLE IF NOT EXISTS claims (
   user_id INTEGER NOT NULL REFERENCES users(id),
   claimed_at TEXT NOT NULL
 );
+-- 기자별 '확인 완료' (받은편지함 비우기)
+CREATE TABLE IF NOT EXISTS triage (
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  rcept_no TEXT NOT NULL,
+  done_at TEXT NOT NULL,
+  PRIMARY KEY (user_id, rcept_no)
+);
 CREATE TABLE IF NOT EXISTS push_subs (
   endpoint TEXT PRIMARY KEY,
   user_id INTEGER NOT NULL REFERENCES users(id),

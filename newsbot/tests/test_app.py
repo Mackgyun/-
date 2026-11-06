@@ -207,3 +207,22 @@ def test_alio_ids_with_colons_work(ai):
                (now_iso(),))
     assert client.get("/api/disclosures/alio:R1:D1").json()["url"] == "https://www.alio.go.kr/x"
     assert client.post("/api/claims/alio:R1:D1").status_code == 200
+
+
+def test_splits_done_and_counts(ctx):
+    client, db, _ = ctx
+    login(client)
+    db.execute("""INSERT INTO disclosures(rcept_no, corp_code, corp_name, report_nm, rcept_dt, level, is_correction,
+               watched, first_seen_at) VALUES('2','B','한미약품','분기보고서','20261105','yellow',0,0,?)""", (now_iso(),))
+    c = client.get("/api/counts").json()
+    assert c["inbox"] == 2 and c["red"] == 1 and c["unclaimed"] == 1 and c["beat"] == 0
+    client.post("/api/subscriptions", json={"kind": "company", "value": "한미 약품"})
+    assert [i["corp_name"] for i in client.get("/api/feed?split=beat").json()["items"]] == ["한미약품"]
+    assert client.post("/api/done/20261105000001").status_code == 200
+    assert [i["rcept_no"] for i in client.get("/api/feed?split=inbox").json()["items"]] == ["2"]
+    assert client.get("/api/counts").json()["red"] == 0
+    client.delete("/api/done/20261105000001")  # 되돌리기
+    assert client.get("/api/counts").json()["inbox"] == 2
+    r = client.post("/api/done-all?split=inbox").json()
+    assert r["done"] == 2 and client.get("/api/counts").json()["inbox"] == 0
+    assert len(client.get("/api/feed?split=all").json()["items"]) == 2

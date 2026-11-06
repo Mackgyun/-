@@ -1,23 +1,23 @@
-// 청년의사 브리핑 — 화면 스크립트 (프레임워크 없음, 모든 글자는 textContent로 넣어 XSS 방지)
+// 청년의사 브리핑 — 화면 스크립트 v2
+// 원칙: 키보드로 분류(J/K·E·C·O·Z), 명령 팔레트(Ctrl K), 즉시 반영 + 되돌리기, 글자는 textContent로만 넣기(XSS 방지)
 "use strict";
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
-const LEVEL = {
-  red: { label: "중요", cls: "red", icon: "▲" },
-  yellow: { label: "일반", cls: "yellow", icon: "●" },
-  gray: { label: "기록", cls: "gray", icon: "○" },
+const LV = { red: { icon: "▲", label: "중요" }, yellow: { icon: "●", label: "일반" }, gray: { icon: "○", label: "기록" } };
+const SPLITS = {
+  inbox: { title: "미확인", empty: ["미확인 공시가 없습니다", "새 공시는 수집되는 대로 표시됩니다."], key: "1" },
+  red: { title: "중요", empty: ["미확인 중요 공시가 없습니다", "중요 공시는 알림으로도 발송됩니다."], key: "2" },
+  beat: { title: "내 출입처", empty: ["해당 공시가 없습니다", "출입처 기업과 키워드는 설정에서 지정합니다."], key: "3" },
+  unclaimed: { title: "담당 미지정", empty: ["담당 미지정 중요 공시가 없습니다", "최근 3일 기준입니다."], key: "4" },
+  alio: { title: "알리오", empty: ["알리오 공시가 없습니다", "공공기관 공시는 6시간마다 수집합니다."], key: "5" },
+  all: { title: "전체", empty: ["수집된 공시가 없습니다", "DART 인증키를 등록하면 수집을 시작합니다."], key: "6" },
+  mine: { title: "내 담당", empty: ["담당 공시가 없습니다", "공시를 선택한 뒤 C 키로 담당을 지정합니다."], key: "" },
 };
 
 const state = {
-  me: null,
-  view: "feed",
-  filter: { level: "", watched: 0, q: "", source: "" },
-  draftSource: null,
-  items: [],
-  selected: -1,
-  detail: null,
-  seen: new Set(),
+  me: null, view: "list", split: "inbox", q: "", items: [], selected: -1, detail: null,
+  counts: {}, lastVisit: null, draftSource: null, undo: null, loading: false,
 };
 
 // ---------- 공통 ----------
@@ -27,11 +27,11 @@ function el(tag, attrs = {}, ...children) {
     if (v === null || v === undefined || v === false) continue;
     if (k === "class") node.className = v;
     else if (k === "text") node.textContent = v;
-    else if (k === "style") node.style.cssText = v; // CSP: style 속성 대신 CSSOM 사용
+    else if (k === "style") node.style.cssText = v; // CSP: style 속성 대신 CSSOM
     else if (k.startsWith("on")) node.addEventListener(k.slice(2), v);
     else node.setAttribute(k, v === true ? "" : v);
   }
-  for (const c of children.flat()) if (c != null) node.append(c instanceof Node ? c : document.createTextNode(c));
+  for (const c of children.flat()) if (c != null && c !== false) node.append(c instanceof Node ? c : document.createTextNode(c));
   return node;
 }
 
@@ -47,36 +47,47 @@ async function api(path, opts = {}) {
     throw new Error("로그인이 필요합니다.");
   }
   const data = res.headers.get("content-type")?.includes("json") ? await res.json() : null;
-  if (!res.ok) throw new Error((data && data.detail && (typeof data.detail === "string" ? data.detail : "입력값을 확인해 주세요.")) || `오류 ${res.status}`);
+  if (!res.ok) throw new Error((data && typeof data.detail === "string" && data.detail) || "요청을 처리하지 못했습니다.");
   return data;
 }
 
+const store = {
+  get(k, d = null) { try { return localStorage.getItem(k) ?? d; } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+};
+
 let toastTimer;
-function toast(msg) {
+function toast(msg, undo) {
   const t = $("#toast");
-  t.textContent = msg;
-  t.classList.add("show");
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => t.classList.remove("show"), 2800);
+  t.replaceChildren(el("span", { text: msg }));
+  state.undo = undo || null;
+  if (undo) t.append(el("button", { type: "button", text: "실행 취소 Z", onclick: runUndo }), el("span", { class: "bar" }));
+  t.hidden = false;
+  toastTimer = setTimeout(() => { t.hidden = true; state.undo = null; }, undo ? 5000 : 2600);
+}
+async function runUndo() {
+  const u = state.undo;
+  if (!u) return;
+  state.undo = null;
+  $("#toast").hidden = true;
+  try { await u(); toast("실행을 취소했습니다."); } catch (e) { toast(e.message); }
 }
 
-function fmtSeen(iso) {
+function fmtTime(iso) {
   if (!iso) return "";
   const d = new Date(iso);
-  const today = new Date();
+  const now = new Date();
   const hm = d.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", hour12: false });
-  return d.toDateString() === today.toDateString() ? hm : `${d.getMonth() + 1}/${d.getDate()} ${hm}`;
+  if (d.toDateString() === now.toDateString()) return hm;
+  const y = new Date(now); y.setDate(now.getDate() - 1);
+  if (d.toDateString() === y.toDateString()) return `어제 ${hm}`;
+  return `${d.getMonth() + 1}/${d.getDate()}`;
 }
 const fmtDate = (s) => (s && s.length === 8 ? `${s.slice(0, 4)}.${s.slice(4, 6)}.${s.slice(6)}` : s || "");
-
-function badge(item) {
-  const lv = LEVEL[item.level] || LEVEL.yellow;
-  const wrap = el("span", { class: "row", style: "gap:.25rem" });
-  wrap.append(el("span", { class: `badge ${lv.cls}` }, el("span", { "aria-hidden": "true", text: lv.icon }), lv.label));
-  if (item.is_correction) wrap.append(el("span", { class: "badge fix", text: "정정" }));
-  if (item.source === "alio") wrap.append(el("span", { class: "badge src", text: "알리오" }));
-  return wrap;
-}
+const initials = (name) => (name || "?").trim().slice(0, 1);
+const won = (v) => (v == null ? "-" : Math.round(v).toLocaleString("ko-KR"));
+const isTyping = () => ["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement?.tagName);
 
 // ---------- 인증 ----------
 function showAuth(joinCode) {
@@ -87,7 +98,6 @@ function showAuth(joinCode) {
   $("#join-form").dataset.code = joinCode || "";
   (joinCode ? $("#join-form input") : $("#login-form input")).focus();
 }
-
 $("#login-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const f = new FormData(e.target);
@@ -95,27 +105,18 @@ $("#login-form").addEventListener("submit", async (e) => {
     await api("/api/login", { method: "POST", body: { username: f.get("username"), password: f.get("password") } });
     $("#auth-error").textContent = "";
     await boot();
-  } catch (err) {
-    $("#auth-error").textContent = err.message;
-  }
+  } catch (err) { $("#auth-error").textContent = err.message; }
 });
-
 $("#join-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const f = new FormData(e.target);
   try {
-    await api("/api/register", {
-      method: "POST",
-      body: { code: e.target.dataset.code, username: f.get("username"), display_name: f.get("display_name"), password: f.get("password") },
-    });
+    await api("/api/register", { method: "POST", body: { code: e.target.dataset.code, username: f.get("username"), display_name: f.get("display_name"), password: f.get("password") } });
     location.hash = "#settings";
     await boot();
-    toast("계정을 만들었어요. 이 기기에서 알림을 켜 주세요.");
-  } catch (err) {
-    $("#auth-error").textContent = err.message;
-  }
+    toast("계정을 만들었습니다. 알림과 출입처를 설정하세요.");
+  } catch (err) { $("#auth-error").textContent = err.message; }
 });
-
 $("#logout-btn").addEventListener("click", async () => {
   await api("/api/logout", { method: "POST" });
   location.hash = "";
@@ -123,260 +124,447 @@ $("#logout-btn").addEventListener("click", async () => {
 });
 
 // ---------- 화면 전환 ----------
-function setView(view) {
-  if (view === "admin" && state.me?.role !== "admin") view = "feed";
+const VIEWS = ["list", "ask", "draft", "finance", "mail", "settings", "admin"];
+function setView(view, navKey) {
+  if (view === "admin" && state.me?.role !== "admin") view = "list";
   state.view = view;
-  const section = view === "mine" ? "feed" : view;
-  $$(".view").forEach((v) => (v.hidden = v.id !== `view-${section}`));
-  $$("[data-view]").forEach((a) => a.setAttribute("aria-current", a.dataset.view === view ? "page" : "false"));
-  $(".topbar").hidden = section !== "feed";
-  $("#ask").hidden = !["feed", "ask"].includes(section);
-  if (section === "feed") {
-    $("#feed-title").textContent = view === "mine" ? "내가 맡은 건" : "오늘의 피드";
-    $("#briefing").hidden = view === "mine";
-    loadFeed(true);
-  }
-  if (view === "settings") renderSettings();
-  if (view === "admin") renderAdmin();
+  VIEWS.forEach((v) => ($(`#view-${v}`).hidden = v !== view));
+  $$("[data-nav]").forEach((a) => a.setAttribute("aria-current", a.dataset.nav === navKey ? "page" : "false"));
+  $(".sidebar").classList.remove("open");
+  if (view !== "list") closeDetail(true);
   if (view === "ask") renderChats();
   if (view === "draft") renderDrafts();
+  if (view === "finance") renderFinance();
   if (view === "mail") renderMail();
-  if (view === "alio") renderAlio();
+  if (view === "settings") renderSettings();
+  if (view === "admin") renderAdmin();
+  window.scrollTo(0, 0);
 }
 
 function route() {
-  const h = location.hash.slice(1);
+  const h = decodeURIComponent(location.hash.slice(1));
   if (h.startsWith("join/")) return showAuth(h.slice(5));
   if (!state.me) return;
   if (h.startsWith("d/")) {
-    if (state.view !== "feed") setView("feed");
-    return openDetail(decodeURIComponent(h.slice(2)));
+    if (state.view !== "list") { setView("list", `s/${state.split}`); loadList(true); }
+    return openDetail(h.slice(2));
   }
   if (h.startsWith("draft/")) {
     const [kind, ...rest] = h.slice(6).split("/");
-    state.draftSource = { kind: kind === "m" ? "mail" : "disclosure", ref: decodeURIComponent(rest.join("/")) };
-    closeDetail();
-    return setView("draft");
+    state.draftSource = { kind: kind === "m" ? "mail" : "disclosure", ref: rest.join("/") };
+    return setView("draft", "draft");
   }
-  if (h === "draft") state.draftSource = null; // 메뉴로 들어오면 붙여 넣기 모드
-  setView(["feed", "mine", "settings", "admin", "ask", "draft", "mail", "alio"].includes(h) ? h : "feed");
+  if (h === "draft") state.draftSource = null;
+  if (h.startsWith("s/") && SPLITS[h.slice(2)]) {
+    const changed = state.split !== h.slice(2) || state.view !== "list";
+    state.split = h.slice(2);
+    setView("list", h);
+    if (changed || !state.items.length) loadList(true);
+    return;
+  }
+  if (["ask", "draft", "finance", "mail", "settings", "admin"].includes(h)) return setView(h, h);
+  location.replace("#s/inbox");
 }
 window.addEventListener("hashchange", route);
 
-// ---------- 오늘의 브리핑 ----------
-async function loadSummary() {
-  const s = await api("/api/summary");
-  const box = $("#briefing");
-  box.replaceChildren(
-    el("div", { class: "tile alert" }, el("div", { class: "label", text: "오늘 중요 공시" }), el("div", { class: "num", text: s.red })),
-    el("div", { class: "tile" }, el("div", { class: "label", text: "오늘 일반 공시" }), el("div", { class: "num", text: s.yellow })),
-    el("div", { class: "tile" }, el("div", { class: "label", text: "담당 미정 (중요)" }), el("div", { class: "num", text: s.unclaimed_top })),
-    el("div", { class: "tile" }, el("div", { class: "label", text: "내가 맡은 건" }), el("div", { class: "num", text: s.my_claims })),
-    el("div", { class: "tile wide" },
-      el("div", { class: "label", text: "지금 확인할 것" }),
-      s.top.length
-        ? el("ul", { class: "top-list" }, s.top.map((t) =>
-            el("li", {}, el("button", { type: "button", onclick: () => (location.hash = `#d/${t.rcept_no}`) },
-              badge(t), el("strong", { text: t.corp_name }), el("span", { class: "muted t", text: t.report_nm }),
-              t.claimed_name ? el("span", { class: "claimed small", text: `✓ ${t.claimed_name}` }) : null))))
-        : el("p", { class: "muted small", text: "오늘은 아직 중요 공시가 없어요." })),
-  );
-  const dg = $("#digest");
-  dg.hidden = !s.briefing || state.view === "mine";
-  if (s.briefing) {
-    dg.replaceChildren(el("div", { class: "label", text: `정기 브리핑 · ${s.briefing.slot}${s.briefing.model ? " · AI 요약" : ""}` }),
-      el("div", { text: s.briefing.content }));
-  }
-  const banner = $("#mode-banner");
-  banner.hidden = s.alert_mode !== "log";
-  banner.textContent = "지금은 '기록만' 모드예요. 팝업 없이 수집하면서 알림량을 재고 있어요.";
-  const st = $("#status-dot");
-  st.classList.toggle("ok", s.dart_status === "정상");
-  st.classList.toggle("bad", s.dart_status !== "정상" && s.dart_status !== "대기 중");
-  $(".status-text", st).textContent = s.dart_status === "정상" ? `수집 정상 · ${fmtSeen(s.last_poll_at)}` : s.dart_status;
-  st.title = s.dart_status;
+// ---------- 개수·오늘 요약 ----------
+async function loadCounts() {
+  const c = (state.counts = await api("/api/counts"));
+  $$("[data-count]").forEach((n) => (n.textContent = c[n.dataset.count] ? c[n.dataset.count] : ""));
+  document.title = c.inbox ? `(${c.inbox}) 청년의사 브리핑` : "청년의사 브리핑";
+  if (state.view === "list" && state.split === "inbox" && !$("#today").hidden) renderToday().catch(() => {});
+  return c;
 }
 
-// ---------- 피드 ----------
-function feedQuery(before = "") {
-  const p = new URLSearchParams();
-  if (state.filter.level) p.set("level", state.filter.level);
-  if (state.filter.watched) p.set("watched", "1");
-  if (state.filter.source) p.set("source", state.filter.source);
-  if (state.filter.q) p.set("q", state.filter.q);
-  if (state.view === "mine") p.set("mine", "1");
+async function renderToday() {
+  const box = $("#today");
+  if (state.split !== "inbox" || state.q) { box.hidden = true; return; }
+  const s = await api("/api/summary");
+  const c = state.counts.inbox !== undefined ? state.counts : await api("/api/counts");
+  const dateText = new Date().toLocaleDateString("ko-KR", { month: "long", day: "numeric", weekday: "long" });
+  // 한 문장 요약: 지금 해야 할 일 중심 (데이터 스토리텔링)
+  const story = el("p", { class: "story" });
+  if (c.red) {
+    story.append("미확인 중요 공시 ", el("b", { text: `${c.red}건` }));
+    story.append(c.unclaimed ? ` 중 ${c.unclaimed}건이 담당 미지정입니다.` : ". 모두 담당이 지정되어 있습니다.");
+  } else if (c.inbox) story.append(`미확인 중요 공시는 없습니다. 일반 공시 ${c.inbox}건이 남아 있습니다.`);
+  else story.append("미확인 공시가 없습니다.");
+  if (s.red) story.append(el("span", { class: "muted", style: "font-weight:500", text: ` 오늘 수집 중요 공시 ${s.red}건` }));
+  const stat = (label, n, href, alert) => el("a", { class: `stat${alert ? " alert" : ""}`, href }, label, el("strong", { text: n }));
+  box.replaceChildren(
+    el("span", { class: "date", text: dateText }), story,
+    el("div", { class: "stats" },
+      stat("미확인", c.inbox || 0, "#s/inbox"), stat("중요", c.red || 0, "#s/red", true),
+      stat("담당 미지정", c.unclaimed || 0, "#s/unclaimed"), stat("내 담당", c.mine || 0, "#s/mine"),
+      s.mails_today != null ? stat("오늘 메일", s.mails_today, "#mail") : null),
+    s.briefing ? el("details", { class: "digest" },
+      el("summary", { text: `정기 브리핑 · ${s.briefing.slot.slice(11)}${s.briefing.model ? " · AI 요약" : ""}` }),
+      el("p", { text: s.briefing.content })) : null,
+  );
+  box.hidden = false;
+  const banner = $("#mode-banner");
+  banner.hidden = s.alert_mode !== "log";
+  banner.textContent = "기록 모드입니다. 공시는 수집하지만 알림은 발송하지 않습니다.";
+  const st = $("#status-dot");
+  const ok = s.dart_status === "정상";
+  st.classList.toggle("ok", ok);
+  st.classList.toggle("bad", !ok && s.dart_status !== "대기 중");
+  $(".status-text", st).textContent = ok ? `DART 정상 · ${fmtTime(s.last_poll_at)} 수집` : s.dart_status;
+  st.title = `DART: ${s.dart_status} / 알리오: ${s.alio_status}`;
+}
+
+// ---------- 목록 ----------
+function listQuery(before = "") {
+  const p = new URLSearchParams({ split: state.split });
+  if (state.q) p.set("q", state.q);
   if (before) p.set("before", before);
   return `/api/feed?${p}`;
 }
 
-async function loadFeed(reset) {
-  const before = reset ? "" : state.items.at(-1)?.first_seen_at || "";
-  const { items } = await api(feedQuery(before));
+async function loadList(reset) {
+  const feed = $("#feed");
   if (reset) {
-    state.items = items;
-    state.selected = -1;
-  } else state.items.push(...items);
-  items.forEach((i) => state.seen.add(i.rcept_no));
-  renderFeed();
-  $("#more-btn").hidden = items.length < 50;
-  if (state.view === "feed") loadSummary().catch(() => {});
+    state.loading = true;
+    feed.replaceChildren(...Array.from({ length: 8 }, () => el("div", { class: "skeleton", "aria-hidden": "true" })));
+    $("#empty").hidden = true;
+    $("#list-title").textContent = SPLITS[state.split].title;
+    $("#done-all").hidden = !["inbox", "red", "beat"].includes(state.split);
+  }
+  const before = reset ? "" : state.items.at(-1)?.first_seen_at || "";
+  try {
+    const { items } = await api(listQuery(before));
+    state.items = reset ? items : [...state.items, ...items];
+    if (reset) state.selected = -1;
+    $("#more-btn").hidden = items.length < 50;
+  } finally { state.loading = false; }
+  renderList();
+  loadCounts().then(renderListCount).catch(() => {});
+  if (reset) renderToday().catch(() => {});
 }
 
-function renderFeed(freshIds = new Set()) {
-  const list = $("#feed");
-  list.replaceChildren(...state.items.map((it, idx) =>
-    el("li", {
-      class: `item${freshIds.has(it.rcept_no) ? " new" : ""}`, role: "option", id: `it-${idx}`,
-      "aria-selected": idx === state.selected ? "true" : "false", onclick: () => select(idx, true),
-    },
-      badge(it),
-      el("div", { style: "min-width:0" },
-        el("div", { class: "row", style: "gap:.4rem" },
-          it.watched ? el("span", { class: "star", title: "감시 기업", text: "★" }) : null,
-          el("span", { class: "who", text: it.corp_name })),
-        el("div", { class: "title", text: it.report_nm, title: it.report_nm })),
-      el("div", { class: "meta" },
-        it.claimed_name ? el("span", { class: "claimed", text: `✓ ${it.claimed_name}` }) : null,
-        el("time", { datetime: it.first_seen_at, text: fmtSeen(it.first_seen_at) })))));
+function renderListCount() {
+  const n = state.counts[state.split];
+  $("#list-count").textContent = n ? `${n}건` : state.items.length ? `${state.items.length}건` : "";
+}
+
+function bucketOf(it) {
+  const t = new Date(it.first_seen_at);
+  if (state.lastVisit && t > state.lastVisit && !it.done_at && state.split !== "all") return "새 공시";
+  const now = new Date();
+  if (t.toDateString() === now.toDateString()) return "오늘";
+  const y = new Date(now); y.setDate(now.getDate() - 1);
+  if (t.toDateString() === y.toDateString()) return "어제";
+  return "이전";
+}
+
+function rowFor(it, idx, fresh) {
+  const lv = LV[it.level] || LV.yellow;
+  const unread = state.lastVisit && new Date(it.first_seen_at) > state.lastVisit && !it.done_at;
+  const act = (label, title, fn) => el("button", { class: "icon-btn", type: "button", title, "aria-label": title,
+    onclick: (e) => { e.stopPropagation(); fn(); } }, label);
+  const mine = it.claimed_by === state.me.id;
+  return el("div", {
+    class: `item${unread ? " unread" : ""}${fresh ? " fresh" : ""}`, role: "option", id: `it-${idx}`, "data-id": it.rcept_no,
+    "aria-selected": idx === state.selected ? "true" : "false", style: it.done_at && state.split === "all" ? "opacity:.6" : "",
+    onclick: () => select(idx, true),
+  },
+    el("span", { class: `lv ${it.level}`, title: lv.label, "aria-label": lv.label, text: lv.icon }),
+    el("span", { class: "who", text: it.corp_name }),
+    el("span", { class: "title", text: it.report_nm, title: it.report_nm }),
+    el("span", { class: "meta" },
+      it.is_correction ? el("span", { class: "tag-s fix", text: "정정" }) : null,
+      it.source === "alio" ? el("span", { class: "tag-s alio", text: "알리오" }) : null,
+      it.claimed_name ? el("span", { class: "claimed-by", title: `담당: ${it.claimed_name}` },
+        el("span", { class: "avatar", text: initials(it.claimed_name) }), it.written_at ? "기사화" : "") : null,
+      el("span", { class: "acts" },
+        act("원문", "원문 보기 (O)", () => window.open(it.url, "_blank", "noopener")),
+        act(mine ? "해제" : "담당", mine ? "담당 해제 (C)" : "담당 지정 (C)", () => toggleClaim(it)),
+        it.done_at ? null : act("확인", "확인 처리 (E)", () => markDone(it))),
+      el("time", { class: "time", datetime: it.first_seen_at, text: fmtTime(it.first_seen_at) })),
+  );
+}
+
+function renderList(freshIds = new Set()) {
+  const nodes = [];
+  let last = null;
+  const groups = {};
+  state.items.forEach((it) => { const b = bucketOf(it); groups[b] = (groups[b] || 0) + 1; });
+  state.items.forEach((it, idx) => {
+    const b = bucketOf(it);
+    if (b !== last) { nodes.push(el("div", { class: "group-head", role: "presentation" }, b, el("span", { class: "n", text: groups[b] }))); last = b; }
+    nodes.push(rowFor(it, idx, freshIds.has(it.rcept_no)));
+  });
+  $("#feed").replaceChildren(...nodes);
   const empty = $("#empty");
   empty.hidden = state.items.length > 0;
-  empty.textContent = state.view === "mine" ? "맡은 공시가 없어요. 피드에서 C 키나 [내가 쓸게요]로 맡을 수 있어요." : "조건에 맞는 공시가 없어요.";
+  if (!state.items.length) {
+    const [t, s] = state.q ? ["검색 결과가 없습니다", "다른 기업명이나 단어로 검색하세요."] : SPLITS[state.split].empty;
+    empty.replaceChildren(
+      el("strong", { text: t }), el("span", { text: s }));
+  }
+  renderListCount();
 }
 
 function select(idx, open) {
   if (idx < 0 || idx >= state.items.length) return;
   state.selected = idx;
-  $$(".item").forEach((n, i) => n.setAttribute("aria-selected", i === idx ? "true" : "false"));
+  $$(".item").forEach((n) => n.setAttribute("aria-selected", n.id === `it-${idx}` ? "true" : "false"));
   $(`#it-${idx}`)?.scrollIntoView({ block: "nearest" });
-  if (open) location.hash = `#d/${state.items[idx].rcept_no}`;
+  if (open) location.hash = `#d/${encodeURIComponent(state.items[idx].rcept_no)}`;
+  else if (state.detail) openDetail(state.items[idx].rcept_no, true);
 }
 
-$("#more-btn").addEventListener("click", () => loadFeed(false));
-
-$$(".filters .chip").forEach((chip) => chip.addEventListener("click", () => {
-  if (chip.dataset.source !== undefined) {
-    state.filter.source = state.filter.source ? "" : chip.dataset.source;
-    chip.setAttribute("aria-pressed", state.filter.source ? "true" : "false");
-  } else if (chip.dataset.watched !== undefined) {
-    state.filter.watched = state.filter.watched ? 0 : 1;
-    chip.setAttribute("aria-pressed", state.filter.watched ? "true" : "false");
-  } else {
-    state.filter.level = chip.dataset.level;
-    $$(".filters .chip[data-level]").forEach((c) => c.setAttribute("aria-pressed", c === chip ? "true" : "false"));
-  }
-  loadFeed(true);
-}));
-
+$("#more-btn").addEventListener("click", () => loadList(false));
 let searchTimer;
 $("#search").addEventListener("input", (e) => {
   clearTimeout(searchTimer);
-  searchTimer = setTimeout(() => { state.filter.q = e.target.value.trim(); loadFeed(true); }, 250);
+  searchTimer = setTimeout(() => { state.q = e.target.value.trim(); loadList(true); }, 250);
+});
+$("#done-all").addEventListener("click", async () => {
+  if (!state.items.length) return;
+  const r = await api(`/api/done-all?split=${state.split}`, { method: "POST" });
+  const ids = r.ids;
+  state.items = [];
+  renderList();
+  loadCounts().catch(() => {});
+  toast(`${r.done}건을 확인 처리했습니다.`, async () => {
+    await Promise.all(ids.map((id) => api(`/api/done/${encodeURIComponent(id)}`, { method: "DELETE" })));
+    await loadList(true);
+  });
 });
 
-// ---------- 상세 ----------
-async function openDetail(rceptNo) {
-  let d;
-  try { d = await api(`/api/disclosures/${encodeURIComponent(rceptNo)}`); }
-  catch (err) { toast(err.message); return; }
-  state.detail = d;
-  const idx = state.items.findIndex((i) => i.rcept_no === rceptNo);
-  if (idx >= 0) select(idx, false);
-  const mine = d.claimed_by === state.me.id;
-  const writtenBtn = mine
-    ? el("button", { class: "btn", type: "button", text: d.written_at ? "✓ 기사화 기록됨" : "기사 썼어요",
-        onclick: async () => {
-          const url = prompt("쓴 기사 주소가 있으면 붙여 넣으세요 (없으면 비워 두기)", d.written_url || "") ?? null;
-          if (url === null) return;
-          try { await api(`/api/claims/${encodeURIComponent(d.rcept_no)}/written`, { method: "POST", body: { url } });
-            toast("기사화로 기록했어요. 시범사업 성과에 반영됩니다."); openDetail(d.rcept_no); } catch (err) { toast(err.message); }
-        } })
-    : null;
-  const claimBtn = d.claimed_by && !mine
-    ? el("button", { class: "btn", type: "button", disabled: true, text: `${d.claimed_name} 기자가 맡음` })
-    : el("button", { class: mine ? "btn" : "btn primary", type: "button", onclick: toggleClaim, text: mine ? "맡기 취소" : "내가 쓸게요 (C)" });
-  $("#detail .detail-inner").replaceChildren(
-    el("div", { class: "row", style: "justify-content:space-between" }, badge(d),
-      el("button", { class: "btn ghost small", type: "button", onclick: closeDetail, "aria-label": "닫기", text: "닫기 (Esc)" })),
-    el("div", {}, el("div", { class: "muted small", text: d.source === "alio" ? "알리오 · 공공기관" : d.watched ? "★ 감시 기업" : "보건의료 업종" }), el("h2", { text: d.corp_name })),
-    el("p", { style: "margin:0;font-weight:600", text: d.report_nm }),
-    el("a", { class: "source", href: d.url, target: "_blank", rel: "noopener noreferrer" }, d.source === "alio" ? "알리오 원문 열기" : "DART 원문 열기", el("span", { "aria-hidden": "true", text: "↗" })),
-    el("dl", { class: "kv" },
-      el("dt", { text: "접수일" }), el("dd", { text: fmtDate(d.rcept_dt) }),
-      el("dt", { text: "접수번호" }), el("dd", { text: d.rcept_no }),
-      el("dt", { text: "제출인" }), el("dd", { text: d.flr_nm || "-" }),
-      el("dt", { text: "비고" }), el("dd", { text: d.rm || "-" }),
-      el("dt", { text: "분류 근거" }), el("dd", { text: d.keyword ? `제목에 '${d.keyword}' 포함` : "키워드 없음 (일반)" }),
-      el("dt", { text: "처음 확인" }), el("dd", { text: fmtSeen(d.first_seen_at) + (d.source === "alio" ? "" : " · DART 공개는 제출 후 약 15분 뒤") })),
-    el("div", { class: "row" }, claimBtn, writtenBtn,
-      el("button", { class: "btn", type: "button", text: "기사 초안",
-        title: state.me.llm_ready ? "이 공시로 초안 쓰기" : "AI API 키가 연결되면 켜집니다",
-        disabled: !state.me.llm_ready, onclick: () => (location.hash = `#draft/d/${encodeURIComponent(d.rcept_no)}`) })),
-  );
-  $("#detail").hidden = false;
-  $("#app").classList.add("has-detail");
+// ---------- 동작: 확인·맡기 (즉시 반영 + 되돌리기) ----------
+const currentItem = () => state.detail || state.items[state.selected];
+
+async function markDone(it) {
+  if (!it || it.done_at) return;
+  const idx = state.items.findIndex((x) => x.rcept_no === it.rcept_no);
+  $(`.item[data-id="${CSS.escape(it.rcept_no)}"]`)?.classList.add("leaving");
+  const removeFromList = !["all", "mine", "alio"].includes(state.split);
+  setTimeout(() => {
+    if (removeFromList && idx >= 0) {
+      state.items.splice(idx, 1);
+      state.selected = Math.min(idx, state.items.length - 1);
+    } else if (idx >= 0) state.items[idx].done_at = new Date().toISOString();
+    renderList();
+    if (state.selected >= 0) select(state.selected, false);
+  }, 150);
+  if (state.detail?.rcept_no === it.rcept_no) closeDetail();
+  try {
+    await api(`/api/done/${encodeURIComponent(it.rcept_no)}`, { method: "POST" });
+    loadCounts().catch(() => {});
+    toast("확인 처리했습니다.", async () => { await api(`/api/done/${encodeURIComponent(it.rcept_no)}`, { method: "DELETE" }); await loadList(true); });
+  } catch (e) { toast(e.message); loadList(true); }
 }
 
-function closeDetail() {
+async function toggleClaim(it) {
+  if (!it) return;
+  const mine = it.claimed_by === state.me.id;
+  if (it.claimed_by && !mine) { toast(`${it.claimed_name} 기자가 담당하고 있습니다.`); return; }
+  try {
+    await api(`/api/claims/${encodeURIComponent(it.rcept_no)}`, { method: mine ? "DELETE" : "POST" });
+    const undo = async () => { await api(`/api/claims/${encodeURIComponent(it.rcept_no)}`, { method: mine ? "POST" : "DELETE" }); await refreshAfterChange(it.rcept_no); };
+    toast(mine ? "담당을 해제했습니다." : "담당으로 지정했습니다.", undo);
+    await refreshAfterChange(it.rcept_no);
+  } catch (e) { toast(e.message); }
+}
+
+async function refreshAfterChange(id) {
+  await loadList(true);
+  const idx = state.items.findIndex((x) => x.rcept_no === id);
+  if (idx >= 0) select(idx, false);
+  if (state.detail?.rcept_no === id) openDetail(id, true);
+}
+
+// ---------- 상세 ----------
+async function openDetail(id, quiet) {
+  let d;
+  try { d = await api(`/api/disclosures/${encodeURIComponent(id)}`); }
+  catch (err) { toast(err.message); return; }
+  state.detail = d;
+  const idx = state.items.findIndex((i) => i.rcept_no === id);
+  if (idx >= 0 && idx !== state.selected) { state.selected = idx; $$(".item").forEach((n) => n.setAttribute("aria-selected", n.id === `it-${idx}` ? "true" : "false")); }
+  const lv = LV[d.level] || LV.yellow;
+  const mine = d.claimed_by === state.me.id;
+  const other = d.claimed_by && !mine;
+  const bar = (label, title, fn, opts = {}) => {
+    const [text, key] = label.split(" ");
+    return el("button", { class: "icon-btn", type: "button", title, "aria-label": title, disabled: opts.disabled, onclick: fn },
+      text, key ? el("span", { class: "k", "aria-hidden": "true", text: ` ${key}` }) : null);
+  };
+  const ask = (q) => { location.hash = "#ask"; setTimeout(() => sendQuestion(q), 50); };
+  const timeline = [
+    el("li", { class: "on" }, el("span", { text: "수집" }), el("time", { text: fmtTime(d.first_seen_at) })),
+    d.claimed_name ? el("li", { class: "on" }, el("span", { text: `담당 지정: ${d.claimed_name}` }), el("time", { text: fmtTime(d.claimed_at) }))
+      : el("li", {}, el("span", { text: "담당 미지정" }), el("span")),
+    d.written_at ? el("li", { class: "on" }, d.written_url ? el("a", { href: d.written_url, target: "_blank", rel: "noopener noreferrer", text: "기사화" }) : el("span", { text: "기사화" }), el("time", { text: fmtTime(d.written_at) })) : null,
+  ];
+  const panel = $("#detail");
+  panel.replaceChildren(
+    el("div", { class: "d-bar" },
+      bar("✕", "닫기 (Esc)", () => closeDetail()),
+      el("span", { class: "sp" }),
+      bar("확인 E", "확인 처리 (E)", () => markDone(d)),
+      bar(mine ? "해제 C" : "담당 C", other ? `담당: ${d.claimed_name}` : mine ? "담당 해제 (C)" : "담당 지정 (C)", () => toggleClaim(d), { disabled: other }),
+      bar("원문 O", "원문 보기 (O)", () => window.open(d.url, "_blank", "noopener")),
+      bar("초안 D", state.me.llm_ready ? "초안 작성 (D)" : "AI 인증키 등록 후 사용 가능", () => (location.hash = `#draft/d/${encodeURIComponent(d.rcept_no)}`), { disabled: !state.me.llm_ready })),
+    el("div", { class: "d-body" },
+      el("div", { class: "stack", style: "gap:6px" },
+        el("div", { class: "d-kicker" },
+          el("span", { class: `lv ${d.level}`, text: `${lv.icon} ${lv.label}` }),
+          el("span", { text: "·" }), el("span", { text: d.source === "alio" ? "알리오" : "DART" }),
+          d.is_correction ? el("span", { class: "tag-s fix", text: "정정" }) : null,
+          d.watched && d.source !== "alio" ? el("span", { text: "★ 감시 기업" }) : null),
+        el("h2", { class: "d-title", text: d.report_nm }),
+        el("div", { class: "d-corp", text: d.corp_name })),
+      el("a", { class: "source", href: d.url, target: "_blank", rel: "noopener noreferrer" }, d.source === "alio" ? "알리오 원문 보기" : "DART 원문 보기", el("span", { "aria-hidden": "true", text: "↗" })),
+      el("dl", { class: "props" },
+        el("dt", { text: "접수일" }), el("dd", { text: fmtDate(d.rcept_dt) }),
+        el("dt", { text: "제출인" }), el("dd", { text: d.flr_nm || "-" }),
+        el("dt", { text: "분류 근거" }), el("dd", { text: d.keyword ? `제목 키워드 ${d.keyword}` : "해당 키워드 없음" }),
+        d.rm ? el("dt", { text: "비고" }) : null, d.rm ? el("dd", { text: d.rm }) : null,
+        el("dt", { text: "접수번호" }), el("dd", { class: "muted", text: d.rcept_no })),
+      el("section", {}, el("p", { class: "section-label", text: "처리 이력" }), el("ol", { class: "timeline" }, timeline),
+        mine ? el("div", { class: "d-actions", style: "margin-top:12px" }, el("button", { class: "btn sm", type: "button",
+          text: d.written_at ? "기사 URL 수정" : "기사화 기록", onclick: () => markWritten(d) })) : null),
+      state.me.llm_ready ? el("section", {}, el("p", { class: "section-label", text: "AI 질문" }),
+        el("div", { class: "ai-chips" },
+          el("button", { class: "ai-chip", type: "button", text: "핵심 요약", onclick: () => ask(`${d.corp_name} ${d.report_nm}(접수번호 ${d.rcept_no}) 핵심 요약`) }),
+          d.source !== "alio" ? el("button", { class: "ai-chip", type: "button", text: "전년 실적 비교", onclick: () => ask(`${d.corp_name} 최근 사업연도 매출액·영업이익·당기순이익 전년 대비`) }) : null,
+          el("button", { class: "ai-chip", type: "button", text: "최근 30일 공시", onclick: () => ask(`${d.corp_name} 최근 30일 공시 시간순 정리`) }))) : null,
+      d.source !== "alio" ? el("p", { class: "muted small", text: "DART 공개는 제출 후 약 15분 늦습니다." }) : null),
+  );
+  panel.hidden = false;
+  $("#app").classList.add("has-detail");
+  if (!quiet) panel.querySelector(".d-bar button")?.focus({ preventScroll: true });
+}
+
+async function markWritten(d) {
+  const url = prompt("기사 URL을 입력하세요. 없으면 비워 둡니다.", d.written_url || "");
+  if (url === null) return;
+  try {
+    await api(`/api/claims/${encodeURIComponent(d.rcept_no)}/written`, { method: "POST", body: { url } });
+    toast("기사화로 기록했습니다.");
+    openDetail(d.rcept_no, true);
+  } catch (e) { toast(e.message); }
+}
+
+function closeDetail(silent) {
+  if ($("#detail").hidden) return;
   $("#detail").hidden = true;
   $("#app").classList.remove("has-detail");
   state.detail = null;
-  if (location.hash.startsWith("#d/")) history.replaceState(null, "", state.view === "mine" ? "#mine" : "#feed");
+  if (!silent && location.hash.startsWith("#d/")) history.replaceState(null, "", `#s/${state.split}`);
+  if (!silent) $("#feed").focus({ preventScroll: true });
 }
 
-async function toggleClaim() {
-  const d = state.detail || state.items[state.selected];
-  if (!d) return;
-  const mine = d.claimed_by === state.me.id;
-  try {
-    await api(`/api/claims/${encodeURIComponent(d.rcept_no)}`, { method: mine ? "DELETE" : "POST" });
-    toast(mine ? "맡기를 취소했어요." : "이 공시를 맡았어요.");
-    await loadFeed(true);
-    if (state.detail) openDetail(d.rcept_no);
-  } catch (err) { toast(err.message); }
+// ---------- 명령 팔레트 ----------
+let paletteItems = [];
+let paletteIdx = 0;
+let paletteReturn = null;
+function commands(query) {
+  const it = currentItem();
+  const go = (h) => () => (location.hash = h);
+  const list = [
+    ...Object.entries(SPLITS).map(([k, v]) => ({ grp: "이동", icon: "→", label: v.title, key: v.key, run: go(`#s/${k}`) })),
+    { grp: "이동", icon: "✦", label: "AI 질문", run: go("#ask") },
+    { grp: "이동", icon: "✎", label: "기사 초안", run: go("#draft") },
+    { grp: "이동", icon: "₩", label: "공공기관 결산", run: go("#finance") },
+    { grp: "이동", icon: "✉", label: "보도자료 메일", run: go("#mail") },
+    { grp: "이동", icon: "⚙", label: "설정", run: go("#settings") },
+    state.me?.role === "admin" ? { grp: "이동", icon: "⌂", label: "관리자", run: go("#admin") } : null,
+    it ? { grp: "선택한 공시", icon: "✓", label: `확인 처리 · ${it.corp_name}`, key: "E", run: () => markDone(it) } : null,
+    it ? { grp: "선택한 공시", icon: "●", label: `${it.claimed_by === state.me.id ? "담당 해제" : "담당 지정"} · ${it.corp_name}`, key: "C", run: () => toggleClaim(it) } : null,
+    it ? { grp: "선택한 공시", icon: "↗", label: "원문 보기", key: "O", run: () => window.open(it.url, "_blank", "noopener") } : null,
+    it && state.me.llm_ready ? { grp: "선택한 공시", icon: "✎", label: "초안 작성", key: "D", run: go(`#draft/d/${encodeURIComponent(it.rcept_no)}`) } : null,
+    { grp: "작업", icon: "✓", label: "현재 목록 전체 확인 처리", run: () => $("#done-all").click() },
+    { grp: "작업", icon: "◔", label: "이 기기 알림 설정", run: () => enablePush().catch((e) => toast(e.message)) },
+    { grp: "보기", icon: "◐", label: "테마 전환 (시스템, 라이트, 다크)", run: cycleTheme },
+    { grp: "보기", icon: "≡", label: "목록 밀도 전환 (기본, 촘촘)", run: () => applyDensity(store.get("nb-density") === "compact" ? "comfy" : "compact") },
+    { grp: "도움말", icon: "?", label: "단축키 J/K 이동, Enter 열기, E 확인, C 담당, O 원문, D 초안, Z 실행 취소, 1~6 목록 전환", run: () => {} },
+  ].filter(Boolean);
+  const q = query.trim().toLowerCase();
+  const hits = q ? list.filter((c) => c.label.toLowerCase().includes(q) || c.grp.includes(q)) : list;
+  if (q && state.me?.llm_ready) hits.unshift({ grp: "AI", icon: "✦", label: `AI에게 질문: ${query.trim()}`, run: () => { location.hash = "#ask"; setTimeout(() => sendQuestion(query.trim()), 50); } });
+  if (q) hits.push({ grp: "검색", icon: "⌕", label: `공시 검색: ${query.trim()}`, run: () => { $("#search").value = query.trim(); state.q = query.trim(); if (location.hash === "#s/all") loadList(true); else location.hash = "#s/all"; } });
+  return hits;
 }
+function renderPalette() {
+  paletteItems = commands($("#palette-input").value);
+  paletteIdx = Math.min(paletteIdx, Math.max(0, paletteItems.length - 1));
+  const nodes = [];
+  let grp = null;
+  paletteItems.forEach((c, i) => {
+    if (c.grp !== grp) { nodes.push(el("li", { class: "grp", role: "presentation", text: c.grp })); grp = c.grp; }
+    nodes.push(el("li", { class: "opt", role: "option", id: `po-${i}`, "aria-selected": i === paletteIdx ? "true" : "false",
+      onclick: () => runPalette(i), onmousemove: () => { if (paletteIdx !== i) { paletteIdx = i; renderPaletteSel(); } } },
+      el("span", { class: "lbl", text: c.label }), c.key ? el("kbd", { text: c.key }) : null));
+  });
+  $("#palette-list").replaceChildren(...nodes);
+  $("#palette-input").setAttribute("aria-activedescendant", `po-${paletteIdx}`);
+}
+function renderPaletteSel() {
+  $$("#palette-list .opt").forEach((n) => n.setAttribute("aria-selected", n.id === `po-${paletteIdx}` ? "true" : "false"));
+  $(`#po-${paletteIdx}`)?.scrollIntoView({ block: "nearest" });
+  $("#palette-input").setAttribute("aria-activedescendant", `po-${paletteIdx}`);
+}
+function openPalette() {
+  paletteReturn = document.activeElement;
+  $("#palette").hidden = false;
+  $("#palette-input").value = "";
+  paletteIdx = 0;
+  renderPalette();
+  $("#palette-input").focus();
+}
+function closePalette() {
+  $("#palette").hidden = true;
+  paletteReturn?.focus?.({ preventScroll: true });
+}
+function runPalette(i) {
+  const c = paletteItems[i];
+  closePalette();
+  c?.run();
+}
+$("#palette-btn").addEventListener("click", openPalette);
+$("#palette-input").addEventListener("input", () => { paletteIdx = 0; renderPalette(); });
+$("#palette-input").addEventListener("keydown", (e) => {
+  if (e.key === "ArrowDown") { e.preventDefault(); paletteIdx = Math.min(paletteIdx + 1, paletteItems.length - 1); renderPaletteSel(); }
+  else if (e.key === "ArrowUp") { e.preventDefault(); paletteIdx = Math.max(paletteIdx - 1, 0); renderPaletteSel(); }
+  else if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); runPalette(paletteIdx); }
+  else if (e.key === "Escape") { e.preventDefault(); closePalette(); }
+  else if (e.key === "Tab") e.preventDefault();
+});
+$("#palette").addEventListener("click", (e) => { if (e.target.id === "palette") closePalette(); });
 
 // ---------- 키보드 ----------
 document.addEventListener("keydown", (e) => {
-  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { e.preventDefault(); $("#ask-input").focus(); return; }
-  const typing = ["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement?.tagName);
-  if (e.key === "Escape") { if (typing) document.activeElement.blur(); else closeDetail(); return; }
-  if (typing || !["feed", "mine"].includes(state.view)) return;
-  if (e.key === "/") { e.preventDefault(); $("#search").focus(); }
-  else if (e.key === "j") select(Math.min(state.selected + 1, state.items.length - 1), false);
-  else if (e.key === "k") select(Math.max(state.selected - 1, 0), false);
-  else if (e.key === "Enter" && state.selected >= 0) select(state.selected, true);
-  else if (e.key === "c" && (state.detail || state.selected >= 0)) toggleClaim();
-});
-
-// ---------- 질문창 ----------
-$("#ask").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const input = $("#ask-input");
-  const q = input.value.trim();
-  if (!q) return;
-  if (!state.me.llm_ready) { toast("AI API 키가 연결되면 질문할 수 있어요."); return; }
-  if (state.view !== "ask") location.hash = "#ask";
-  input.value = "";
-  input.disabled = true;
-  const pending = el("div", { class: "bubble a", text: "자료를 찾아보는 중…" });
-  $("#chat").append(el("div", { class: "bubble q", text: q }), pending);
-  pending.scrollIntoView({ block: "end" });
-  try {
-    const r = await api("/api/ask", { method: "POST", body: { question: q } });
-    pending.replaceWith(answerBubble(r.answer, r.trace));
-  } catch (err) {
-    pending.textContent = err.message;
-  } finally {
-    input.disabled = false;
-    input.focus();
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { e.preventDefault(); $("#palette").hidden ? openPalette() : closePalette(); return; }
+  if (!$("#palette").hidden || !state.me || $("#app").hidden) return;
+  if (e.key === "Escape") { if (isTyping()) document.activeElement.blur(); else closeDetail(); return; }
+  if (isTyping() || e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
+  if (e.key === ".") { e.preventDefault(); openPalette(); return; }
+  if (e.key.toLowerCase() === "z" && state.undo) { e.preventDefault(); runUndo(); return; }
+  const n = Object.entries(SPLITS).find(([, v]) => v.key && v.key === e.key);
+  if (n) { location.hash = `#s/${n[0]}`; return; }
+  if (state.view !== "list") return;
+  const it = currentItem();
+  switch (e.key.toLowerCase()) {
+    case "/": e.preventDefault(); $("#search").focus(); break;
+    case "j": case "arrowdown": e.preventDefault(); select(Math.min(state.selected + 1, state.items.length - 1), false); break;
+    case "k": case "arrowup": e.preventDefault(); select(Math.max(state.selected - 1, 0), false); break;
+    case "enter": if (state.selected >= 0 && !state.detail) select(state.selected, true); break;
+    case "e": markDone(it); break;
+    case "c": toggleClaim(it); break;
+    case "o": if (it) window.open(it.url, "_blank", "noopener"); break;
+    case "d": if (it && state.me.llm_ready) location.hash = `#draft/d/${encodeURIComponent(it.rcept_no)}`; break;
   }
 });
 
+// ---------- AI 질문 ----------
 const TOOL_NAMES = { search_disclosures: "공시 검색", get_disclosure: "공시 원문", company_financials: "DART 재무",
   alio_finance: "알리오 결산", search_newsroom_articles: "기사 검색", search_my_mail: "내 메일" };
 
 function linkify(text) {
-  // URL만 링크로 만들고 나머지는 글자 그대로 (innerHTML 사용 안 함)
   const frag = document.createDocumentFragment();
   let last = 0;
   for (const m of text.matchAll(/https?:\/\/[^\s)\]>]+/g)) {
@@ -387,85 +575,117 @@ function linkify(text) {
   frag.append(text.slice(last));
   return frag;
 }
-
 function answerBubble(answer, trace = []) {
   const b = el("div", { class: "bubble a" }, linkify(answer));
-  if (trace.length) b.append(el("div", { class: "tools", text: "찾아본 자료: " + [...new Set(trace.map((t) => TOOL_NAMES[t.tool] || t.tool))].join(", ") }));
+  if (trace.length) b.append(el("div", { class: "tools" }, [...new Set(trace.map((t) => TOOL_NAMES[t.tool] || t.tool))].map((n) => el("span", { class: "chip-s", text: n }))));
   return b;
 }
-
 async function renderChats() {
   const box = $("#chat");
   if (!state.me.llm_ready) {
-    box.replaceChildren(el("p", { class: "banner", text: "AI API 키가 아직 연결되지 않았어요. 관리자가 .env 에 키를 넣으면 질문할 수 있어요." }));
+    box.replaceChildren(el("div", { class: "empty" }, el("strong", { text: "AI 인증키가 등록되지 않았습니다" }), el("span", { text: "관리자가 .env에 인증키를 등록하면 사용할 수 있습니다." })));
+    $("#ask-form").hidden = true;
     return;
   }
+  $("#ask-form").hidden = false;
   const { items } = await api("/api/chats");
   box.replaceChildren(...items.reverse().flatMap((c) => [el("div", { class: "bubble q", text: c.question }), answerBubble(c.answer, c.trace)]));
-  if (!items.length) box.append(el("p", { class: "muted", text: "예: \"이번 주 기술이전 공시 정리해줘\", \"서울대병원 작년 의료수익 전년 대비?\", \"유한양행 2025년 매출과 영업이익\"" }));
-  $("#ask-input").focus();
+  if (!items.length) {
+    box.append(el("div", { class: "ai-chips" }, ["이번 주 기술이전 공시 목록", "서울대병원 2025년 의료수익 전년 대비", "유한양행 2025년 매출액과 영업이익"].map((q) =>
+      el("button", { class: "ai-chip", type: "button", text: q, onclick: () => sendQuestion(q) }))));
+  }
+  box.lastElementChild?.scrollIntoView({ block: "end" });
+  $("#ask-input").focus({ preventScroll: true });
 }
+async function sendQuestion(q) {
+  q = (q || "").trim();
+  if (!q) return;
+  if (!state.me.llm_ready) { toast("AI 인증키 등록 후 사용할 수 있습니다."); return; }
+  const input = $("#ask-input");
+  input.value = "";
+  input.disabled = true;
+  $(".ai-chips", $("#chat"))?.remove();
+  const pending = el("div", { class: "bubble a muted", text: "자료 검색 중" });
+  $("#chat").append(el("div", { class: "bubble q", text: q }), pending);
+  pending.scrollIntoView({ block: "end" });
+  try {
+    const r = await api("/api/ask", { method: "POST", body: { question: q } });
+    pending.replaceWith(answerBubble(r.answer, r.trace));
+  } catch (err) { pending.textContent = err.message; }
+  finally { input.disabled = false; input.focus({ preventScroll: true }); }
+}
+$("#ask-form").addEventListener("submit", (e) => { e.preventDefault(); sendQuestion($("#ask-input").value); });
+$("#ask-input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendQuestion(e.target.value); }
+});
 
 // ---------- 기사 초안 ----------
 async function renderDrafts() {
   const src = state.draftSource;
-  const form = $("#draft-form");
-  if (src) {
-    let label = "";
-    if (src.kind === "disclosure") {
-      try { const d = await api(`/api/disclosures/${encodeURIComponent(src.ref)}`); label = `공시: ${d.corp_name} · ${d.report_nm}`; }
-      catch { label = "공시"; }
-      $("#draft-source").textContent = `${label} — 원문은 자동으로 가져옵니다. 취재 메모가 있으면 아래에 덧붙이세요.`;
-    } else {
-      $("#draft-source").textContent = "메일을 원자료로 씁니다.";
-    }
-    form.elements.namedItem("title").hidden = true;
+  const title = $("#draft-form").elements.namedItem("title");
+  if (src?.kind === "disclosure") {
+    let label = "공시";
+    try { const d = await api(`/api/disclosures/${encodeURIComponent(src.ref)}`); label = `${d.corp_name} · ${d.report_nm}`; } catch {}
+    $("#draft-source").textContent = `${label}. 공시 원문은 자동으로 첨부됩니다. 취재 메모가 있으면 입력하세요.`;
+    title.hidden = true;
+  } else if (src?.kind === "mail") {
+    $("#draft-source").textContent = "선택한 보도자료 메일을 원자료로 사용합니다.";
+    title.hidden = true;
   } else {
-    $("#draft-source").textContent = "보도자료나 메모를 붙여 넣거나, 피드의 공시 상세에서 [기사 초안]을 누르세요.";
-    form.elements.namedItem("title").hidden = false;
+    $("#draft-source").textContent = "보도자료나 취재 메모를 입력하세요. 공시 상세에서도 바로 작성할 수 있습니다.";
+    title.hidden = false;
   }
   const { items } = await api("/api/drafts");
-  $("#draft-list").replaceChildren(...items.map((d) => el("li", {},
-    el("button", { type: "button", onclick: () => showDraft(d.id) }, `${fmtSeen(d.created_at)} · ${d.source_title || "(제목 없음)"}`))));
-  if (!items.length) $("#draft-list").append(el("li", { class: "muted small", text: "아직 없어요." }));
+  $("#draft-list").replaceChildren(...(items.length ? items.map((d) => el("li", {},
+    el("button", { type: "button", onclick: () => showDraft(d.id) }, `${fmtTime(d.created_at)} · ${d.source_title || "제목 없음"}`)))
+    : [el("li", { class: "muted small", text: "작성한 초안이 없습니다." })]));
 }
-
 function renderDraftResult(d) {
   $("#draft-result").hidden = false;
   $("#draft-text").value = d.draft;
   const miss = d.checks.filter((c) => !c.found);
   $("#draft-checks").replaceChildren(
-    el("p", { class: "small", text: miss.length ? `원자료에서 찾지 못한 숫자 ${miss.length}개 — 반드시 확인하세요.` : "초안의 숫자는 모두 원자료에 있어요." }),
+    el("p", { class: "check-head", text: miss.length ? `원자료에서 확인되지 않은 숫자 ${miss.length}개` : "모든 숫자가 원자료와 일치합니다." }),
     el("ul", { class: "checks" }, d.checks.map((c) => el("li", { class: c.found ? "" : "miss", title: c.context, text: `${c.found ? "✓" : "✗"} ${c.number}` }))));
-  $("#draft-examples").textContent = d.examples?.length ? "참고한 내 기사: " + d.examples.map((e) => e.title).join(" / ") : "";
-  $("#draft-result").scrollIntoView({ block: "start" });
+  $("#draft-examples").textContent = d.examples?.length ? "참고 기사: " + d.examples.map((e) => e.title).join(" / ") : "";
+  $("#draft-result").scrollIntoView({ block: "start", behavior: "smooth" });
 }
-
-async function showDraft(id) {
-  try { renderDraftResult(await api(`/api/drafts/${id}`)); } catch (err) { toast(err.message); }
-}
-
+async function showDraft(id) { try { renderDraftResult(await api(`/api/drafts/${id}`)); } catch (e) { toast(e.message); } }
 $("#draft-form").addEventListener("submit", async (e) => {
   e.preventDefault();
-  if (!state.me.llm_ready) { toast("AI API 키가 연결되면 초안을 쓸 수 있어요."); return; }
+  if (!state.me.llm_ready) { toast("AI 인증키 등록 후 사용할 수 있습니다."); return; }
   const f = new FormData(e.target);
   const src = state.draftSource;
-  const body = src
-    ? { source_kind: src.kind, source_ref: src.ref, text: f.get("text") || "", kind: f.get("kind") }
+  const body = src ? { source_kind: src.kind, source_ref: src.ref, text: f.get("text") || "", kind: f.get("kind") }
     : { source_kind: "text", title: f.get("title") || "", text: f.get("text") || "", kind: f.get("kind") };
-  $("#draft-busy").hidden = false;
-  e.target.querySelector("button[type=submit]").disabled = true;
-  try {
-    const d = await api("/api/drafts", { method: "POST", body });
-    renderDraftResult(d);
-    renderDrafts();
-  } catch (err) { toast(err.message); }
-  finally { $("#draft-busy").hidden = true; e.target.querySelector("button[type=submit]").disabled = false; }
+  const btn = e.target.querySelector("button[type=submit]");
+  $("#draft-busy").hidden = false; btn.disabled = true;
+  try { renderDraftResult(await api("/api/drafts", { method: "POST", body })); renderDrafts(); }
+  catch (err) { toast(err.message); }
+  finally { $("#draft-busy").hidden = true; btn.disabled = false; }
 });
 $("#draft-copy").addEventListener("click", async () => {
-  try { await navigator.clipboard.writeText($("#draft-text").value); toast("초안을 복사했어요. 검수 후 CMS에 붙여 넣으세요."); }
+  try { await navigator.clipboard.writeText($("#draft-text").value); toast("복사했습니다."); }
   catch { $("#draft-text").select(); toast("Ctrl+C로 복사하세요."); }
 });
+
+// ---------- 공공기관 결산 ----------
+async function renderFinance() {
+  const a = await api("/api/alio");
+  $("#alio-status").textContent = a.enabled ? `${a.status}${a.last_poll_at ? " · 마지막 수집 " + fmtTime(a.last_poll_at) : ""}` : "알리오 수집 꺼짐";
+  $("#alio-orgs").textContent = a.orgs.length ? a.orgs.map((o) => o.name).join(", ") : "기관 목록을 아직 불러오지 못했습니다.";
+  $("#alio-missing").textContent = a.missing.length ? `알리오에 없는 기관명: ${a.missing.join(", ")}. config/alio.toml의 표기를 확인하세요.` : "";
+  $("#alio-finance").replaceChildren(...(a.finance.length ? a.finance.map((f) => el("section", { class: "card stack" },
+    el("div", { class: "row between" }, el("h2", { class: "h3", text: f.org }),
+      el("a", { class: "source", href: f.url, target: "_blank", rel: "noopener noreferrer" }, "알리오 원문 ↗")),
+    el("p", { class: "muted small", style: "margin:0", text: [f.title, f.unit].filter(Boolean).join(" · ") }),
+    el("table", { class: "fin" }, el("thead", {}, el("tr", {}, ["항목", "당기", "전기", "증감", "증감률"].map((h) => el("th", { scope: "col", text: h })))),
+      el("tbody", {}, f.items.map((i) => el("tr", {},
+        el("td", { text: i.label + (i.year ? ` (${i.year})` : "") }), el("td", { text: won(i.value) }), el("td", { text: won(i.prev) }),
+        el("td", { class: i.change > 0 ? "up" : i.change < 0 ? "down" : "", text: i.change == null ? "-" : (i.change > 0 ? "+" : "") + won(i.change) }),
+        el("td", { class: i.pct > 0 ? "up" : i.pct < 0 ? "down" : "", text: i.pct == null ? "-" : `${i.pct > 0 ? "+" : ""}${i.pct}%` })))))))
+    : [el("div", { class: "empty" }, el("strong", { text: "수집된 결산이 없습니다" }), el("span", { text: "결산 공시(통상 3~4월)가 올라오면 전년 대비 표가 생성됩니다." }))]));
+}
 
 // ---------- 메일 ----------
 async function renderMail() {
@@ -474,44 +694,20 @@ async function renderMail() {
   $("#mail-wrap").hidden = off;
   if (off) return;
   const { items } = await api("/api/mail");
-  $("#mail-list").replaceChildren(...items.map((m) => el("li", { class: "item", onclick: () => openMail(m.id) },
-    el("span", { class: "badge yellow", text: "메일" }),
-    el("div", { style: "min-width:0" }, el("div", { class: "who", text: m.sender }), el("div", { class: "title", text: m.subject })),
-    el("div", { class: "meta" }, m.embargo ? el("span", { class: "mail-embargo", text: "엠바고" }) : null,
-      el("time", { text: fmtSeen(m.sent_at || m.first_seen_at) })))));
-  if (!items.length) $("#mail-list").append(el("li", { class: "empty", text: "가져온 메일이 없어요. '내 설정'에서 메일을 연결하세요." }));
+  $("#mail-list").replaceChildren(...(items.length ? items.map((m) => el("div", { class: "item", role: "listitem", tabindex: "0",
+    onclick: () => openMail(m.id), onkeydown: (e) => { if (e.key === "Enter") openMail(m.id); } },
+    el("span", { class: "lv", text: "✉" }), el("span", { class: "who", text: m.sender }), el("span", { class: "title", text: m.subject }),
+    el("span", { class: "meta" }, m.embargo ? el("span", { class: "mail-embargo", text: "엠바고" }) : null, el("time", { class: "time", text: fmtTime(m.sent_at || m.first_seen_at) }))))
+    : [el("div", { class: "empty" }, el("strong", { text: "수집된 메일이 없습니다" }), el("span", { text: "설정에서 메일을 연결하세요." }))]));
 }
-
 async function openMail(id) {
   const m = await api(`/api/mail/${id}`);
   const box = $("#mail-detail");
   box.hidden = false;
-  box.replaceChildren(
-    el("div", { class: "muted small", text: `${m.sender} · ${fmtSeen(m.sent_at)}` }), el("h3", { text: m.subject }),
-    m.embargo ? el("p", { class: "mail-embargo", text: m.embargo }) : null,
-    el("div", { class: "pre", text: m.body }),
-    el("div", { class: "row" }, el("button", { class: "btn", type: "button", text: "이 메일로 초안",
-      onclick: () => (location.hash = `#draft/m/${m.id}`) })));
-  box.scrollIntoView({ block: "start" });
-}
-
-// ---------- 알리오 ----------
-const won = (v) => (v == null ? "-" : Math.round(v).toLocaleString("ko-KR"));
-async function renderAlio() {
-  const a = await api("/api/alio");
-  $("#alio-status").textContent = a.enabled ? `상태: ${a.status}${a.last_poll_at ? " · 마지막 확인 " + fmtSeen(a.last_poll_at) : ""}` : "알리오 수집이 꺼져 있어요.";
-  $("#alio-orgs").textContent = a.orgs.length ? a.orgs.map((o) => o.name).join(", ") : "아직 기관 목록을 받지 못했어요.";
-  $("#alio-missing").textContent = a.missing.length ? `알리오에서 찾지 못한 이름: ${a.missing.join(", ")} (config/alio.toml 확인)` : "";
-  $("#alio-finance").replaceChildren(...(a.finance.length ? a.finance.map((f) => el("div", { class: "card stack" },
-    el("div", { class: "row between" }, el("h3", { text: f.org }),
-      el("a", { class: "source", href: f.url, target: "_blank", rel: "noopener noreferrer" }, "알리오 원문 ↗")),
-    el("div", { class: "muted small", text: `${f.title || ""} ${f.unit ? "· " + f.unit : ""}` }),
-    el("table", { class: "fin" }, el("thead", {}, el("tr", {}, ["항목", "올해", "전년", "증감", "증감률"].map((h) => el("th", { text: h })))),
-      el("tbody", {}, f.items.map((i) => el("tr", {},
-        el("td", { text: i.label + (i.year ? ` (${i.year})` : "") }), el("td", { text: won(i.value) }), el("td", { text: won(i.prev) }),
-        el("td", { class: i.change > 0 ? "up" : i.change < 0 ? "down" : "", text: i.change == null ? "-" : (i.change > 0 ? "+" : "") + won(i.change) }),
-        el("td", { class: i.pct > 0 ? "up" : i.pct < 0 ? "down" : "", text: i.pct == null ? "-" : `${i.pct > 0 ? "+" : ""}${i.pct}%` }))))))) :
-    [el("p", { class: "muted", text: "아직 수집된 결산이 없어요. 결산 공시가 올라오면(보통 3~4월) 전년 대비 표가 여기에 생깁니다." })]));
+  box.replaceChildren(el("div", { class: "muted small", text: `${m.sender} · ${fmtTime(m.sent_at)}` }), el("h2", { class: "h3", text: m.subject }),
+    m.embargo ? el("p", { class: "mail-embargo", text: m.embargo }) : null, el("div", { class: "pre", text: m.body }),
+    el("div", { class: "row" }, el("button", { class: "btn", type: "button", text: "초안 작성", onclick: () => (location.hash = `#draft/m/${m.id}`) })));
+  box.scrollIntoView({ block: "start", behavior: "smooth" });
 }
 
 // ---------- 설정 ----------
@@ -520,92 +716,90 @@ async function renderSettings() {
   const kindName = { all: "보건의료 전체", watch: "감시 기업 전체", company: "기업", keyword: "키워드" };
   $("#subs").replaceChildren(...(me.subscriptions.length ? me.subscriptions.map((s) =>
     el("span", { class: "tag" }, `${kindName[s.kind]}${s.value ? ": " + s.value : ""}`,
-      el("button", { type: "button", "aria-label": "삭제", text: "×", onclick: async () => {
-        await api(`/api/subscriptions?kind=${s.kind}&value=${encodeURIComponent(s.value)}`, { method: "DELETE" });
-        renderSettings();
-      } }))) : [el("span", { class: "muted small", text: "아직 없어요. 아래에서 추가하세요." })]));
-  $("#push-state").textContent = `알림 받는 기기 ${me.push_devices}대 · 서버 알림 모드: ${me.alert_mode === "notify" ? "알림 보냄" : "기록만 (관리자가 켜면 알림 시작)"}`;
-  $("#font-size").value = parseInt(getComputedStyle(document.documentElement).getPropertyValue("--fs")) || 15;
+      el("button", { type: "button", "aria-label": `${s.value || kindName[s.kind]} 삭제`, text: "×", onclick: async () => {
+        await api(`/api/subscriptions?kind=${s.kind}&value=${encodeURIComponent(s.value)}`, { method: "DELETE" }); renderSettings(); loadCounts();
+      } }))) : [el("span", { class: "muted small", text: "지정된 항목이 없습니다." })]));
+  $("#push-state").textContent = `알림 수신 기기 ${me.push_devices}대 · 서버 ${me.alert_mode === "notify" ? "알림 발송 중" : "기록 모드(알림 미발송)"}`;
+  $("#font-size").value = parseInt(getComputedStyle(document.documentElement).getPropertyValue("--fs")) || 14;
+  $("#theme-select").value = store.get("nb-theme", "auto");
+  $("#density-select").value = store.get("nb-density", "comfy");
   $("#reporter-form").reporter_id.value = me.reporter_id || "";
-  $("#articles-state").textContent = `가져온 내 기사 ${me.my_articles}편`;
-  $("#stylebook-meta").textContent = me.stylebook ? `마지막 수정 ${fmtSeen(me.stylebook.updated_at)} · 기사 ${me.stylebook.source_count}편 분석` : "아직 없음";
-  const sb = await api("/api/stylebook");
-  $("#stylebook").value = sb.content || "";
+  $("#stylebook-meta").textContent = me.stylebook ? `${fmtTime(me.stylebook.updated_at)} 수정 · 기사 ${me.stylebook.source_count}편 분석` : "없음";
+  $("#stylebook").value = (await api("/api/stylebook")).content || "";
   $("#stylebook-build").disabled = !me.llm_ready;
   $("#mail-settings").hidden = !me.mail_enabled;
   const acc = me.mail_account;
-  $("#mail-account-state").textContent = acc
-    ? `연결됨: ${acc.username} · 메일함 '${acc.folder}'${acc.last_error ? " · 오류: " + acc.last_error : ""}`
-    : "연결된 메일이 없어요.";
-  $("#usage").textContent = me.llm_ready
-    ? `이번 달 AI 사용 ${me.spent_krw.toLocaleString("ko-KR")}원 / 한도 ${me.limit_krw.toLocaleString("ko-KR")}원 (${me.llm_provider})`
-    : "AI API 키가 아직 연결되지 않았어요.";
+  $("#mail-account-state").textContent = acc ? `연결: ${acc.username} · ${acc.folder}${acc.last_error ? " · 오류: " + acc.last_error : ""}` : "연결된 메일 계정이 없습니다.";
+  $("#usage").textContent = me.llm_ready ? `이번 달 AI 사용 ${me.spent_krw.toLocaleString("ko-KR")}원 / 한도 ${me.limit_krw.toLocaleString("ko-KR")}원` : "AI 인증키가 등록되지 않았습니다.";
   pollArticles();
 }
-
+$("#sub-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const f = new FormData(e.target);
+  try { await api("/api/subscriptions", { method: "POST", body: { kind: f.get("kind"), value: f.get("value") || "" } }); e.target.reset(); renderSettings(); loadCounts(); }
+  catch (err) { toast(err.message); }
+});
+$("#sub-form select").addEventListener("change", (e) => { $("#sub-form input").hidden = ["all", "watch"].includes(e.target.value); });
 $("#reporter-form").addEventListener("submit", async (e) => {
   e.preventDefault();
-  try { await api("/api/me/reporter", { method: "POST", body: { reporter_id: e.target.reporter_id.value.trim() } });
-    toast("기자 ID를 저장했어요."); renderSettings(); } catch (err) { toast(err.message); }
+  try { await api("/api/me/reporter", { method: "POST", body: { reporter_id: e.target.reporter_id.value.trim() } }); toast("저장했습니다."); renderSettings(); }
+  catch (err) { toast(err.message); }
 });
 let articlesTimer;
 async function pollArticles() {
   clearTimeout(articlesTimer);
   const st = await api("/api/articles/status");
   const j = st.job;
-  let msg = `가져온 내 기사 ${st.count}편`;
-  if (j?.state === "running") msg += ` · 가져오는 중 (확인 ${j.checked || 0}건, 추가 ${j.added || 0}건)`;
-  else if (j?.state === "done") msg += ` · 마지막 가져오기 ${fmtSeen(j.at)} (추가 ${j.added}건)`;
+  let msg = `수집한 내 기사 ${st.count}편`;
+  if (j?.state === "running") msg += ` · 수집 중 (확인 ${j.checked || 0}건, 추가 ${j.added || 0}건)`;
+  else if (j?.state === "done") msg += ` · ${fmtTime(j.at)} 완료 (추가 ${j.added}건)`;
   else if (j?.state === "error") msg += ` · 오류: ${j.error}`;
   $("#articles-state").textContent = msg;
   if (j?.state === "running" && state.view === "settings") articlesTimer = setTimeout(pollArticles, 4000);
 }
 $("#articles-btn").addEventListener("click", async () => {
-  try { const r = await api("/api/articles/collect", { method: "POST" }); toast(r.started ? "내 기사를 가져오기 시작했어요. 몇 분 걸려요." : r.message); pollArticles(); }
+  try { const r = await api("/api/articles/collect", { method: "POST" }); toast(r.started ? "기사 수집을 시작했습니다." : r.message); pollArticles(); }
   catch (err) { toast(err.message); }
 });
 $("#stylebook-build").addEventListener("click", async (e) => {
   e.target.disabled = true;
-  toast("스타일북을 만드는 중이에요. 1~2분 걸려요.");
-  try { const r = await api("/api/stylebook/build", { method: "POST" }); $("#stylebook").value = r.content; toast("스타일북을 만들었어요. 읽어 보고 고쳐 주세요."); renderSettings(); }
+  toast("스타일북 생성 중");
+  try { const r = await api("/api/stylebook/build", { method: "POST" }); $("#stylebook").value = r.content; toast("스타일북을 생성했습니다. 내용을 검토하세요."); renderSettings(); }
   catch (err) { toast(err.message); }
   finally { e.target.disabled = false; }
 });
 $("#stylebook-save").addEventListener("click", async () => {
-  try { await api("/api/stylebook", { method: "PUT", body: { content: $("#stylebook").value } }); toast("스타일북을 저장했어요."); }
-  catch (err) { toast(err.message); }
+  try { await api("/api/stylebook", { method: "PUT", body: { content: $("#stylebook").value } }); toast("저장했습니다."); } catch (err) { toast(err.message); }
 });
 $("#mail-form").addEventListener("submit", async (e) => {
   e.preventDefault();
-  const f = new FormData(e.target);
-  try {
-    await api("/api/mail/account", { method: "PUT", body: Object.fromEntries(f.entries()) });
-    e.target.password.value = "";
-    toast("메일을 연결했어요."); renderSettings();
-  } catch (err) { toast(err.message); }
+  try { await api("/api/mail/account", { method: "PUT", body: Object.fromEntries(new FormData(e.target).entries()) }); e.target.password.value = ""; toast("메일 계정을 연결했습니다."); renderSettings(); }
+  catch (err) { toast(err.message); }
 });
 $("#mail-disconnect").addEventListener("click", async () => {
-  if (!confirm("메일 연결을 해제하고 가져온 메일을 지울까요?")) return;
-  await api("/api/mail/account", { method: "DELETE" }); toast("연결을 해제했어요."); renderSettings();
+  if (!confirm("메일 연결을 해제하고 수집된 메일을 삭제합니다. 계속하시겠습니까?")) return;
+  await api("/api/mail/account", { method: "DELETE" }); toast("연결을 해제했습니다."); renderSettings();
 });
+$("#font-size").addEventListener("input", (e) => { document.documentElement.style.setProperty("--fs", `${e.target.value}px`); store.set("nb-fs", e.target.value); });
+$("#theme-select").addEventListener("change", (e) => applyTheme(e.target.value));
+$("#density-select").addEventListener("change", (e) => applyDensity(e.target.value));
 
-$("#sub-form").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const f = new FormData(e.target);
-  try {
-    await api("/api/subscriptions", { method: "POST", body: { kind: f.get("kind"), value: f.get("value") || "" } });
-    e.target.reset();
-    renderSettings();
-  } catch (err) { toast(err.message); }
-});
-$("#sub-form select").addEventListener("change", (e) => {
-  $("#sub-form input").hidden = ["all", "watch"].includes(e.target.value);
-});
-
-$("#font-size").addEventListener("input", (e) => {
-  document.documentElement.style.setProperty("--fs", `${e.target.value}px`);
-  try { localStorage.setItem("nb-fs", e.target.value); } catch {}
-});
+function applyTheme(t) {
+  if (t === "auto") document.documentElement.removeAttribute("data-theme");
+  else document.documentElement.setAttribute("data-theme", t);
+  store.set("nb-theme", t);
+}
+function cycleTheme() {
+  const order = ["auto", "light", "dark"];
+  const next = order[(order.indexOf(store.get("nb-theme", "auto")) + 1) % 3];
+  applyTheme(next);
+  toast({ auto: "테마: 시스템 설정", light: "테마: 라이트", dark: "테마: 다크" }[next]);
+}
+function applyDensity(d) {
+  if (d === "compact") document.documentElement.setAttribute("data-density", "compact");
+  else document.documentElement.removeAttribute("data-density");
+  store.set("nb-density", d);
+}
 
 // ---------- 푸시 알림 ----------
 function b64ToBytes(b64) {
@@ -613,31 +807,24 @@ function b64ToBytes(b64) {
   const raw = atob((b64 + pad).replace(/-/g, "+").replace(/_/g, "/"));
   return Uint8Array.from(raw, (c) => c.charCodeAt(0));
 }
-
 async function enablePush() {
-  if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
-    toast("이 브라우저는 알림을 지원하지 않아요. 아이폰은 홈 화면에 추가한 앱에서 켜 주세요.");
-    return;
-  }
+  if (!("serviceWorker" in navigator) || !("PushManager" in window)) { toast("이 브라우저는 알림을 지원하지 않습니다. 아이폰은 홈 화면에 추가한 앱에서 설정하세요."); return; }
   const perm = await Notification.requestPermission();
-  if (perm !== "granted") { toast("알림 권한이 거부됐어요. 브라우저 설정에서 허용해 주세요."); return; }
+  if (perm !== "granted") { toast("알림 권한이 차단되어 있습니다. 브라우저 설정에서 허용하세요."); return; }
   const reg = await navigator.serviceWorker.register("/sw.js");
   const { key } = await api("/api/push/key");
   const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(key) });
   await api("/api/push/subscribe", { method: "POST", body: sub.toJSON() });
   $("#push-btn").hidden = true;
-  toast("이 기기에서 알림을 받아요.");
+  toast("이 기기에서 알림을 받습니다.");
   if (state.view === "settings") renderSettings();
 }
 $("#push-btn").addEventListener("click", () => enablePush().catch((e) => toast(e.message)));
 $("#push-enable").addEventListener("click", () => enablePush().catch((e) => toast(e.message)));
 $("#push-test").addEventListener("click", async () => {
-  try {
-    const { sent } = await api("/api/push/test", { method: "POST" });
-    toast(sent ? `테스트 알림을 ${sent}대에 보냈어요.` : "알림 받는 기기가 없어요. 먼저 알림을 켜 주세요.");
-  } catch (err) { toast(err.message); }
+  try { const { sent } = await api("/api/push/test", { method: "POST" }); toast(sent ? `테스트 알림을 ${sent}대에 보냈습니다.` : "알림 수신 기기가 없습니다. 먼저 알림을 설정하세요."); }
+  catch (err) { toast(err.message); }
 });
-
 async function checkPushButton() {
   if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) return;
   const reg = await navigator.serviceWorker.getRegistration();
@@ -649,93 +836,85 @@ async function checkPushButton() {
 async function renderAdmin() {
   const [st, us, mt] = await Promise.all([api("/api/admin/status"), api("/api/admin/users"), api("/api/admin/metrics")]);
   const t = mt.totals;
-  $("#metrics-totals").replaceChildren(
-    el("dt", { text: "수집 공시" }), el("dd", { text: `${t.disclosures}건 (중요 ${t.red}건)` }),
-    el("dt", { text: "보낸 알림" }), el("dd", { text: `${t.alerts}건` }),
-    el("dt", { text: "수집 가동률" }), el("dd", { text: t.uptime_pct == null ? "DART 키 없음" : `${t.uptime_pct}% (오류 ${t.poll_errors}건)` }),
-    el("dt", { text: "AI 비용" }), el("dd", { text: `${t.cost_krw.toLocaleString("ko-KR")}원` }));
-  $("#metrics-users").replaceChildren(...mt.users.map((u) => el("tr", {},
-    el("td", { text: u.display_name }), el("td", { text: u.claims }), el("td", { text: u.written }),
-    el("td", { text: u.questions }), el("td", { text: u.drafts }), el("td", { text: `${u.cost_krw.toLocaleString("ko-KR")}원` }))));
+  const stat = (label, v, alert) => el("span", { class: `stat${alert ? " alert" : ""}` }, label, el("strong", { text: v }));
+  $("#metrics-totals").replaceChildren(stat("수집 공시", `${t.disclosures}건`), stat("중요", `${t.red}건`, true), stat("보낸 알림", `${t.alerts}건`),
+    stat("가동률", t.uptime_pct == null ? "키 없음" : `${t.uptime_pct}%`), stat("AI 비용", `${t.cost_krw.toLocaleString("ko-KR")}원`));
+  $("#metrics-users").replaceChildren(...mt.users.map((u) => el("tr", {}, el("td", { text: u.display_name }), el("td", { text: u.claims }),
+    el("td", { text: u.written }), el("td", { text: u.questions }), el("td", { text: u.drafts }), el("td", { text: `${u.cost_krw.toLocaleString("ko-KR")}원` }))));
   $("#admin-status").replaceChildren(
-    el("dt", { text: "수집 상태" }), el("dd", { text: st.dart_status }),
-    el("dt", { text: "마지막 수집" }), el("dd", { text: st.last_poll_at ? fmtSeen(st.last_poll_at) : "-" }),
-    el("dt", { text: "오늘 DART 호출" }), el("dd", { text: `${st.dart_calls_today}건` }),
-    el("dt", { text: "알림 모드" }), el("dd", { text: st.alert_mode === "notify" ? "알림 보냄" : "기록만 (.env 의 ALERT_MODE=notify 로 변경)" }),
+    el("dt", { text: "DART" }), el("dd", { text: `${st.dart_status} · 오늘 호출 ${st.dart_calls_today}건` }),
+    el("dt", { text: "마지막 수집" }), el("dd", { text: st.last_poll_at ? fmtTime(st.last_poll_at) : "-" }),
+    el("dt", { text: "알림 모드" }), el("dd", { text: st.alert_mode === "notify" ? "알림 발송" : "기록 모드 (.env에서 ALERT_MODE=notify로 전환)" }),
     el("dt", { text: "알리오" }), el("dd", { text: st.alio_status }),
-    el("dt", { text: "AI" }), el("dd", { text: st.llm }),
-    el("dt", { text: "메일" }), el("dd", { text: st.mail }));
+    el("dt", { text: "AI" }), el("dd", { text: st.llm }), el("dt", { text: "메일" }), el("dd", { text: st.mail }));
   $("#users").replaceChildren(...us.users.map((u) => el("tr", {},
     el("td", { text: u.display_name }), el("td", { text: u.username }), el("td", { text: u.role === "admin" ? "관리자" : "기자" }),
-    el("td", {}, `${u.spent_krw.toLocaleString("ko-KR")} / `,
-      el("input", { class: "limit-input", type: "number", min: "0", step: "1000", value: u.limit_krw, "aria-label": `${u.display_name} 월 한도(원)`,
-        onchange: async (e) => { await api(`/api/admin/users/${u.id}/limit`, { method: "POST", body: { krw: Number(e.target.value) } }); toast("한도를 바꿨어요."); } }), "원"),
-    el("td", { text: u.active ? "사용 중" : "비활성" }),
-    el("td", {}, u.id === state.me.id ? null : el("button", { class: "btn small", type: "button", text: u.active ? "비활성화" : "다시 사용",
+    el("td", {}, `${u.spent_krw.toLocaleString("ko-KR")} / `, el("input", { class: "limit-input", type: "number", min: "0", step: "1000", value: u.limit_krw,
+      "aria-label": `${u.display_name} 월 한도(원)`, onchange: async (e) => { await api(`/api/admin/users/${u.id}/limit`, { method: "POST", body: { krw: Number(e.target.value) } }); toast("한도를 변경했습니다."); } }), "원"),
+    el("td", { text: u.active ? "활성" : "비활성" }),
+    el("td", {}, u.id === state.me.id ? null : el("button", { class: "btn xs", type: "button", text: u.active ? "비활성화" : "활성화",
       onclick: async () => { await api(`/api/admin/users/${u.id}/active?active=${u.active ? 0 : 1}`, { method: "POST" }); renderAdmin(); } })))));
-  $("#events").replaceChildren(...st.events.map((ev) => el("li", { text: `${fmtSeen(ev.at)} [${ev.kind}] ${ev.detail || ""}` })));
+  $("#events").replaceChildren(...st.events.map((ev) => el("li", { text: `${fmtTime(ev.at)} [${ev.kind}] ${ev.detail || ""}` })));
 }
 $("#invite-btn").addEventListener("click", async () => {
   const r = await api("/api/admin/invites", { method: "POST", body: { role: "reporter" } });
   $("#invite-url").value = r.url;
   $("#invite-url").select();
-  try { await navigator.clipboard.writeText(r.url); toast("초대 링크를 복사했어요."); } catch { toast("초대 링크를 만들었어요."); }
+  try { await navigator.clipboard.writeText(r.url); toast("초대 링크를 복사했습니다."); } catch { toast("초대 링크를 생성했습니다."); }
 });
 
-// ---------- 테마 ----------
-function applyTheme(t) {
-  if (t === "auto") document.documentElement.removeAttribute("data-theme");
-  else document.documentElement.setAttribute("data-theme", t);
-  $("#theme-btn").textContent = { auto: "테마: 자동", light: "테마: 밝게", dark: "테마: 어둡게" }[t];
-}
-$("#theme-btn").addEventListener("click", () => {
-  const order = ["auto", "light", "dark"];
-  let cur = "auto";
-  try { cur = localStorage.getItem("nb-theme") || "auto"; } catch {}
-  const next = order[(order.indexOf(cur) + 1) % order.length];
-  try { localStorage.setItem("nb-theme", next); } catch {}
-  applyTheme(next);
+// ---------- 휴대폰 '더보기' ----------
+$("#more-tab").addEventListener("click", (e) => { e.stopPropagation(); $(".sidebar").classList.toggle("open"); });
+document.addEventListener("click", (e) => {
+  const sb = $(".sidebar");
+  if (sb.classList.contains("open") && !sb.contains(e.target)) sb.classList.remove("open");
 });
 
 // ---------- 실시간 갱신 (1분마다) ----------
 async function refresh() {
-  if (!state.me || state.view !== "feed" || document.hidden) return;
+  if (!state.me || document.hidden) return;
   try {
-    const { items } = await api(feedQuery());
-    const fresh = items.filter((i) => !state.seen.has(i.rcept_no));
-    if (!fresh.length) return loadSummary();
-    fresh.forEach((i) => state.seen.add(i.rcept_no));
-    const keep = state.items.filter((i) => !fresh.some((f) => f.rcept_no === i.rcept_no));
-    state.items = [...fresh, ...keep];
-    if (state.selected >= 0) state.selected += fresh.length;
-    renderFeed(new Set(fresh.map((f) => f.rcept_no)));
+    await loadCounts();
+    if (state.view !== "list" || state.q || state.loading) return;
+    const { items } = await api(listQuery());
+    const known = new Set(state.items.map((i) => i.rcept_no));
+    const fresh = items.filter((i) => !known.has(i.rcept_no));
+    if (!fresh.length) return;
+    const selId = state.items[state.selected]?.rcept_no;
+    state.items = [...fresh, ...state.items];
+    state.selected = selId ? state.items.findIndex((i) => i.rcept_no === selId) : -1;
+    renderList(new Set(fresh.map((f) => f.rcept_no)));
     toast(`새 공시 ${fresh.length}건`);
-    loadSummary();
+    renderToday().catch(() => {});
   } catch {}
 }
 setInterval(refresh, 60_000);
-document.addEventListener("visibilitychange", refresh);
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) store.set("nb-last-visit", new Date().toISOString());
+  else refresh();
+});
 
 // ---------- 시작 ----------
 async function boot() {
-  try {
-    state.me = await api("/api/me");
-  } catch {
-    return;
-  }
+  try { state.me = await api("/api/me"); } catch { return; }
   $("#auth").hidden = true;
   $("#app").hidden = false;
   $$(".admin-only").forEach((n) => (n.hidden = state.me.role !== "admin"));
+  $("#me-name").textContent = state.me.display_name;
+  $("#me-avatar").textContent = initials(state.me.display_name);
+  const lv = store.get("nb-last-visit");
+  state.lastVisit = lv ? new Date(lv) : new Date(Date.now() - 12 * 3600 * 1000);
+  store.set("nb-last-visit", new Date().toISOString());
   checkPushButton().catch(() => {});
-  route();
+  if (!location.hash || location.hash === "#") location.replace("#s/inbox");
+  else route();
 }
 
 (function init() {
-  try {
-    const fs = localStorage.getItem("nb-fs");
-    if (fs) document.documentElement.style.setProperty("--fs", `${fs}px`);
-    applyTheme(localStorage.getItem("nb-theme") || "auto");
-  } catch { applyTheme("auto"); }
+  const fs = store.get("nb-fs");
+  if (fs) document.documentElement.style.setProperty("--fs", `${fs}px`);
+  applyTheme(store.get("nb-theme", "auto"));
+  applyDensity(store.get("nb-density", "comfy"));
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
   if (location.hash.startsWith("#join/")) showAuth(location.hash.slice(6));
   else boot();

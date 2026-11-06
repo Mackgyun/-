@@ -310,34 +310,112 @@ def create_app(settings: Settings, db: Database | None = None, start_poller: boo
     FEED_SELECT = """SELECT d.*, c.user_id AS claimed_by, u.display_name AS claimed_name, c.written_url, c.written_at
                      FROM disclosures d LEFT JOIN claims c ON c.rcept_no=d.rcept_no
                      LEFT JOIN users u ON u.id=c.user_id"""
+    SPLITS = ("inbox", "red", "beat", "alio", "unclaimed", "mine", "all")
+
+    def _beat_sql(user_id: int) -> tuple[str, list]:
+        """내 출입처: 구독(전체·감시 기업·기업·키워드)에 맞는 공시."""
+        parts, params = [], []
+        for sub in db.query("SELECT kind, value FROM subscriptions WHERE user_id=?", (user_id,)):
+            if sub["kind"] == "all":
+                return "1=1", []
+            if sub["kind"] == "watch":
+                parts.append("d.watched=1")
+            elif sub["kind"] == "company":
+                parts.append("REPLACE(d.corp_name,' ','')=?")
+                params.append("".join(sub["value"].split()))
+            elif sub["kind"] == "keyword":
+                parts.append("REPLACE(d.report_nm,' ','') LIKE ?")
+                params.append("%" + "".join(sub["value"].split()) + "%")
+        return ("(" + " OR ".join(parts) + ")" if parts else "0=1"), params
+
+    def _split_where(split: str, user_id: int) -> tuple[list[str], list]:
+        recent = (now() - timedelta(days=3)).isoformat(timespec="seconds")
+        if split == "inbox":
+            return ["d.level!='gray'", "t.done_at IS NULL", "d.first_seen_at >= ?"], [recent]
+        if split == "red":
+            return ["d.level='red'", "d.is_correction=0", "t.done_at IS NULL"], []
+        if split == "beat":
+            cond, params = _beat_sql(user_id)
+            return ["d.level!='gray'", "t.done_at IS NULL", cond], params
+        if split == "alio":
+            return ["d.source='alio'", "d.level!='gray'"], []
+        if split == "unclaimed":
+            return ["d.level='red'", "d.is_correction=0", "c.user_id IS NULL", "d.first_seen_at >= ?"], [recent]
+        if split == "mine":
+            return ["c.user_id=?"], [user_id]
+        return [], []
+
+    def _feed_sql(user_id: int) -> str:
+        return ("SELECT d.*, c.user_id AS claimed_by, u.display_name AS claimed_name, c.written_url, c.written_at, "
+                "t.done_at FROM disclosures d LEFT JOIN claims c ON c.rcept_no=d.rcept_no "
+                "LEFT JOIN users u ON u.id=c.user_id "
+                f"LEFT JOIN triage t ON t.rcept_no=d.rcept_no AND t.user_id={int(user_id)}")
 
     @app.get("/api/feed")
-    def feed(level: str = "", q: str = "", watched: int = 0, mine: int = 0, include_gray: int = 0,
+    def feed(split: str = "", level: str = "", q: str = "", watched: int = 0, mine: int = 0, include_gray: int = 0,
              source: str = "", before: str = "", limit: int = 50, user: dict = Depends(current_user)):
-        sql = [FEED_SELECT, "WHERE 1=1"]
-        params: list = []
+        where, params = ["1=1"], []
+        if split in SPLITS:
+            w, p = _split_where(split, user["id"])
+            where += w
+            params += p
         if level in ("red", "yellow", "gray"):
-            sql.append("AND d.level=?")
+            where.append("d.level=?")
             params.append(level)
-        elif not include_gray:
-            sql.append("AND d.level!='gray'")
+        elif not include_gray and split != "all":
+            where.append("d.level!='gray'")
         if source in ("dart", "alio"):
-            sql.append("AND d.source=?")
+            where.append("d.source=?")
             params.append(source)
         if q:
-            sql.append("AND (d.corp_name LIKE ? OR d.report_nm LIKE ?)")
+            where.append("(d.corp_name LIKE ? OR d.report_nm LIKE ?)")
             params += [f"%{q}%", f"%{q}%"]
         if watched:
-            sql.append("AND d.watched=1")
+            where.append("d.watched=1")
         if mine:
-            sql.append("AND c.user_id=?")
+            where.append("c.user_id=?")
             params.append(user["id"])
         if before:
-            sql.append("AND d.first_seen_at < ?")
+            where.append("d.first_seen_at < ?")
             params.append(before)
-        sql.append("ORDER BY d.first_seen_at DESC, d.rcept_no DESC LIMIT ?")
+        sql = (_feed_sql(user["id"]) + " WHERE " + " AND ".join(where)
+               + " ORDER BY d.first_seen_at DESC, d.rcept_no DESC LIMIT ?")
         params.append(max(1, min(limit, 200)))
-        return {"items": _decorate(db.query(" ".join(sql), tuple(params)))}
+        return {"items": _decorate(db.query(sql, tuple(params)))}
+
+    @app.get("/api/counts")
+    def counts(user: dict = Depends(current_user)):
+        out = {}
+        for split in SPLITS[:-1]:
+            w, p = _split_where(split, user["id"])
+            if split != "mine":
+                w = w + ["d.level!='gray'"]
+            row = db.one(f"SELECT COUNT(*) n FROM ({_feed_sql(user['id'])} WHERE {' AND '.join(w)})", tuple(p))
+            out[split] = row["n"]
+        return out
+
+    @app.post("/api/done/{rcept_no:path}")
+    def mark_done(rcept_no: str, user: dict = Depends(current_user)):
+        db.execute("INSERT OR IGNORE INTO triage(user_id, rcept_no, done_at) VALUES(?,?,?)",
+                   (user["id"], rcept_no, now_iso()))
+        return {"ok": True}
+
+    @app.delete("/api/done/{rcept_no:path}")
+    def undo_done(rcept_no: str, user: dict = Depends(current_user)):
+        db.execute("DELETE FROM triage WHERE user_id=? AND rcept_no=?", (user["id"], rcept_no))
+        return {"ok": True}
+
+    @app.post("/api/done-all")
+    def done_all(split: str = "inbox", user: dict = Depends(current_user)):
+        if split not in ("inbox", "red", "beat"):
+            raise HTTPException(400, "이 목록은 전체 확인 처리를 지원하지 않습니다.")
+        w, p = _split_where(split, user["id"])
+        rows = db.query(f"{_feed_sql(user['id'])} WHERE {' AND '.join(w)} LIMIT 500", tuple(p))
+        with db.tx() as c:
+            for r in rows:
+                c.execute("INSERT OR IGNORE INTO triage(user_id, rcept_no, done_at) VALUES(?,?,?)",
+                          (user["id"], r["rcept_no"], now_iso()))
+        return {"done": len(rows), "ids": [r["rcept_no"] for r in rows]}
 
     @app.get("/api/summary")
     def summary(user: dict = Depends(current_user)):
@@ -373,7 +451,7 @@ def create_app(settings: Settings, db: Database | None = None, start_poller: boo
         n = db.execute("UPDATE claims SET written_url=?, written_at=? WHERE rcept_no=? AND user_id=?",
                        (body.url.strip() or None, now_iso(), rcept_no, user["id"]))
         if not n:
-            raise HTTPException(400, "먼저 '내가 쓸게요'로 맡아 주세요.")
+            raise HTTPException(400, "담당으로 지정한 공시만 기사화로 기록할 수 있습니다.")
         return {"ok": True}
 
     @app.post("/api/claims/{rcept_no:path}")
@@ -429,7 +507,7 @@ def create_app(settings: Settings, db: Database | None = None, start_poller: boo
             except Exception as e:  # noqa: BLE001
                 db.log("error", f"draft source {ref}: {e!r}")
             if not doc and not text:
-                raise HTTPException(400, "공시 원문을 가져오지 못했어요(DART 키·연결 확인). 보도자료나 메모를 붙여 넣으면 함께 씁니다.")
+                raise HTTPException(400, "공시 원문을 불러오지 못했습니다. DART 인증키와 연결을 확인하거나 원자료를 직접 입력하세요.")
             text = meta + (f"\n원문:\n{doc}" if doc else "") + (f"\n\n기자 메모:\n{text}" if text else "")
         elif body.source_kind == "mail":
             m = db.one("SELECT * FROM mails WHERE id=? AND user_id=?", (int(ref or 0), user["id"]))
@@ -477,10 +555,10 @@ def create_app(settings: Settings, db: Database | None = None, start_poller: boo
     async def collect_articles(user: dict = Depends(current_user)):
         rid = (user.get("reporter_id") or "").strip()
         if not rid:
-            raise HTTPException(400, "설정에서 기자 ID(이메일 앞부분)를 먼저 입력해 주세요.")
+            raise HTTPException(400, "설정에서 기자 ID(이메일 @ 앞부분)를 먼저 등록하세요.")
         key = f"articles:{user['id']}"
         if key in jobs and not jobs[key].done():
-            return {"started": False, "message": "이미 가져오는 중이에요."}
+            return {"started": False, "message": "이미 수집 중입니다."}
 
         async def job():
             db.set(key, json.dumps({"state": "running", "added": 0, "checked": 0, "at": now_iso()}))
@@ -580,7 +658,7 @@ def create_app(settings: Settings, db: Database | None = None, start_poller: boo
     def add_sub(body: SubIn, user: dict = Depends(current_user)):
         value = body.value.strip() if body.kind in ("company", "keyword") else ""
         if body.kind in ("company", "keyword") and not value:
-            raise HTTPException(400, "기업명이나 키워드를 입력해 주세요.")
+            raise HTTPException(400, "기업명 또는 키워드를 입력하세요.")
         db.execute("INSERT OR IGNORE INTO subscriptions(user_id, kind, value) VALUES(?,?,?)",
                    (user["id"], body.kind, value))
         return {"ok": True}
@@ -604,7 +682,7 @@ def create_app(settings: Settings, db: Database | None = None, start_poller: boo
 
     @app.post("/api/push/test")
     async def push_test(user: dict = Depends(current_user)):
-        payload = {"title": "청년의사 브리핑", "body": "알림이 잘 도착했어요. 중요 공시는 이렇게 뜹니다.",
+        payload = {"title": "청년의사 브리핑", "body": "테스트 알림입니다. 중요 공시는 이 형식으로 표시됩니다.",
                    "url": settings.public_url + "/", "tag": "test"}
         sent = await asyncio.to_thread(pusher.send_to_user, user["id"], payload, True)
         return {"sent": sent}

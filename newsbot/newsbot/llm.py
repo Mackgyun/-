@@ -113,7 +113,7 @@ class ClaudeBackend:
                       getattr(u, "cache_read_input_tokens", 0) or 0,
                       getattr(u, "cache_creation_input_tokens", 0) or 0)
         if resp.stop_reason == "refusal":
-            raise LLMError("AI가 이 요청을 처리하지 않았어요. 표현을 바꿔 다시 시도해 주세요.")
+            raise LLMError("AI가 요청을 처리하지 않았습니다. 질문을 바꿔 다시 시도하세요.")
         return resp, usage
 
     def complete(self, model, system, prompt, tier):
@@ -139,7 +139,7 @@ class ClaudeBackend:
                     trace.append({"tool": b.name, "input": b.input, "output": out[:2000]})
                     results.append({"type": "tool_result", "tool_use_id": b.id, "content": out})
             messages.append({"role": "user", "content": results})
-        return "조회를 여러 번 했지만 답을 정리하지 못했어요. 질문을 좁혀 주세요.", trace, usages
+        return "답변을 만들지 못했습니다. 기업명이나 기간을 좁혀 다시 질문하세요.", trace, usages
 
 
 class OpenAIBackend:
@@ -187,7 +187,7 @@ class OpenAIBackend:
                 out = _run_tool(by_name, c.function.name, args)
                 trace.append({"tool": c.function.name, "input": args, "output": out[:2000]})
                 messages.append({"role": "tool", "tool_call_id": c.id, "content": out})
-        return "조회를 여러 번 했지만 답을 정리하지 못했어요. 질문을 좁혀 주세요.", trace, usages
+        return "답변을 만들지 못했습니다. 기업명이나 기간을 좁혀 다시 질문하세요.", trace, usages
 
 
 class LLM:
@@ -204,7 +204,7 @@ class LLM:
     def backend(self):
         if self._backend is None:
             if not self.settings.llm_ready:
-                raise LLMError("AI API 키가 아직 없어요. 관리자가 .env 에 키를 넣으면 켜집니다.")
+                raise LLMError("AI 인증키가 등록되지 않았습니다. 관리자가 .env에 등록하면 사용할 수 있습니다.")
             if self.settings.llm_provider == "claude":
                 self._backend = ClaudeBackend(self.settings.anthropic_api_key)
             else:
@@ -240,7 +240,7 @@ class LLM:
         if user_id is None:
             return
         if self.month_spent(user_id) >= self.limit_for(user_id):
-            raise BudgetExceeded("이번 달 AI 사용 한도를 다 썼어요. 관리자에게 한도 조정을 요청해 주세요.")
+            raise BudgetExceeded("이번 달 AI 사용 한도를 초과했습니다. 한도 조정은 관리자에게 요청하세요.")
 
     def _record(self, user_id, model, purpose, usages: list[Usage]) -> None:
         for u in usages:
@@ -260,7 +260,7 @@ class LLM:
             raise
         except Exception as e:  # noqa: BLE001
             log.exception("llm complete failed")
-            raise LLMError(f"AI 호출에 실패했어요: {type(e).__name__}") from e
+            raise LLMError(f"AI 호출에 실패했습니다 ({type(e).__name__}).") from e
         self._record(user_id, model, purpose, usages)
         return text, model
 
@@ -274,6 +274,6 @@ class LLM:
             raise
         except Exception as e:  # noqa: BLE001
             log.exception("llm agent failed")
-            raise LLMError(f"AI 호출에 실패했어요: {type(e).__name__}") from e
+            raise LLMError(f"AI 호출에 실패했습니다 ({type(e).__name__}).") from e
         self._record(user_id, model, purpose, usages)
         return AgentResult(text=text, trace=trace, model=model)

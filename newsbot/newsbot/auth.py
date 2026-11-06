@@ -127,7 +127,7 @@ def redeem_invite(db: Database, code: str, username: str, display_name: str, pas
     if problem:
         raise ValueError(problem)
     if not username.strip() or not display_name.strip():
-        raise ValueError("아이디와 이름을 입력해 주세요.")
+        raise ValueError("아이디와 이름을 입력하세요.")
     with db.tx() as c:
         inv = c.execute(
             "SELECT * FROM invites WHERE code=? AND used_by IS NULL AND expires_at > ?", (code, now_iso())
