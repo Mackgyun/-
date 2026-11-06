@@ -4,7 +4,7 @@
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
-const LV = { red: { icon: "▲", label: "중요" }, yellow: { icon: "●", label: "일반" }, gray: { icon: "○", label: "기록" } };
+const LV = { red: { label: "중요" }, yellow: { label: "일반" }, gray: { label: "기록" } };
 const SPLITS = {
   inbox: { title: "미확인", empty: ["미확인 공시가 없습니다", "새 공시는 수집되는 대로 표시됩니다."], key: "1" },
   red: { title: "중요", empty: ["미확인 중요 공시가 없습니다", "중요 공시는 알림으로도 발송됩니다."], key: "2" },
@@ -181,24 +181,22 @@ async function renderToday() {
   if (state.split !== "inbox" || state.q) { box.hidden = true; return; }
   const s = await api("/api/summary");
   const c = state.counts.inbox !== undefined ? state.counts : await api("/api/counts");
-  const dateText = new Date().toLocaleDateString("ko-KR", { month: "long", day: "numeric", weekday: "long" });
-  // 한 문장 요약: 지금 해야 할 일 중심 (데이터 스토리텔링)
+  // 한 문장 요약 + 숫자 한 줄 (카드·알약 배지 없이)
   const story = el("p", { class: "story" });
   if (c.red) {
     story.append("미확인 중요 공시 ", el("b", { text: `${c.red}건` }));
     story.append(c.unclaimed ? ` 중 ${c.unclaimed}건이 담당 미지정입니다.` : ". 모두 담당이 지정되어 있습니다.");
   } else if (c.inbox) story.append(`미확인 중요 공시는 없습니다. 일반 공시 ${c.inbox}건이 남아 있습니다.`);
   else story.append("미확인 공시가 없습니다.");
-  if (s.red) story.append(el("span", { class: "muted", style: "font-weight:500", text: ` 오늘 수집 중요 공시 ${s.red}건` }));
-  const stat = (label, n, href, alert) => el("a", { class: `stat${alert ? " alert" : ""}`, href }, label, el("strong", { text: n }));
+  const fig = (label, n, href) => el("a", { class: "fig", href }, `${label} `, el("span", { class: "num", text: n }));
+  const figs = [fig("미확인", c.inbox || 0, "#s/inbox"), fig("중요", c.red || 0, "#s/red"), fig("담당 미지정", c.unclaimed || 0, "#s/unclaimed"),
+    fig("내 담당", c.mine || 0, "#s/mine"), fig("오늘 수집 중요", s.red || 0, "#s/all")];
+  if (s.mails_today != null) figs.push(fig("오늘 메일", s.mails_today, "#mail"));
   box.replaceChildren(
-    el("span", { class: "date", text: dateText }), story,
-    el("div", { class: "stats" },
-      stat("미확인", c.inbox || 0, "#s/inbox"), stat("중요", c.red || 0, "#s/red", true),
-      stat("담당 미지정", c.unclaimed || 0, "#s/unclaimed"), stat("내 담당", c.mine || 0, "#s/mine"),
-      s.mails_today != null ? stat("오늘 메일", s.mails_today, "#mail") : null),
+    story,
+    el("p", { class: "figures" }, figs.flatMap((f, i) => (i ? [el("span", { class: "sep", "aria-hidden": "true", text: "·" }), f] : [f]))),
     s.briefing ? el("details", { class: "digest" },
-      el("summary", { text: `정기 브리핑 · ${s.briefing.slot.slice(11)}${s.briefing.model ? " · AI 요약" : ""}` }),
+      el("summary", { text: `정기 브리핑 ${s.briefing.slot.slice(11)}${s.briefing.model ? " (AI 요약)" : ""}` }),
       el("p", { text: s.briefing.content })) : null,
   );
   box.hidden = false;
@@ -268,7 +266,7 @@ function rowFor(it, idx, fresh) {
     "aria-selected": idx === state.selected ? "true" : "false", style: it.done_at && state.split === "all" ? "opacity:.6" : "",
     onclick: () => select(idx, true),
   },
-    el("span", { class: `lv ${it.level}`, title: lv.label, "aria-label": lv.label, text: lv.icon }),
+    el("span", { class: `lv ${it.level}`, text: lv.label }),
     el("span", { class: "who", text: it.corp_name }),
     el("span", { class: "title", text: it.report_nm, title: it.report_nm }),
     el("span", { class: "meta" },
@@ -393,12 +391,8 @@ async function openDetail(id, quiet) {
       text, key ? el("span", { class: "k", "aria-hidden": "true", text: ` ${key}` }) : null);
   };
   const ask = (q) => { location.hash = "#ask"; setTimeout(() => sendQuestion(q), 50); };
-  const timeline = [
-    el("li", { class: "on" }, el("span", { text: "수집" }), el("time", { text: fmtTime(d.first_seen_at) })),
-    d.claimed_name ? el("li", { class: "on" }, el("span", { text: `담당 지정: ${d.claimed_name}` }), el("time", { text: fmtTime(d.claimed_at) }))
-      : el("li", {}, el("span", { text: "담당 미지정" }), el("span")),
-    d.written_at ? el("li", { class: "on" }, d.written_url ? el("a", { href: d.written_url, target: "_blank", rel: "noopener noreferrer", text: "기사화" }) : el("span", { text: "기사화" }), el("time", { text: fmtTime(d.written_at) })) : null,
-  ];
+  const meta = [d.source === "alio" ? "알리오" : "DART", d.is_correction ? "정정공시" : null,
+    d.watched && d.source !== "alio" ? "감시 기업" : null].filter(Boolean).join(" · ");
   const panel = $("#detail");
   panel.replaceChildren(
     el("div", { class: "d-bar" },
@@ -409,29 +403,26 @@ async function openDetail(id, quiet) {
       bar("원문 O", "원문 보기 (O)", () => window.open(d.url, "_blank", "noopener")),
       bar("초안 D", state.me.llm_ready ? "초안 작성 (D)" : "AI 인증키 등록 후 사용 가능", () => (location.hash = `#draft/d/${encodeURIComponent(d.rcept_no)}`), { disabled: !state.me.llm_ready })),
     el("div", { class: "d-body" },
-      el("div", { class: "stack", style: "gap:6px" },
-        el("div", { class: "d-kicker" },
-          el("span", { class: `lv ${d.level}`, text: `${lv.icon} ${lv.label}` }),
-          el("span", { text: "·" }), el("span", { text: d.source === "alio" ? "알리오" : "DART" }),
-          d.is_correction ? el("span", { class: "tag-s fix", text: "정정" }) : null,
-          d.watched && d.source !== "alio" ? el("span", { text: "★ 감시 기업" }) : null),
+      el("div", { class: "d-head" },
         el("h2", { class: "d-title", text: d.report_nm }),
-        el("div", { class: "d-corp", text: d.corp_name })),
-      el("a", { class: "source", href: d.url, target: "_blank", rel: "noopener noreferrer" }, d.source === "alio" ? "알리오 원문 보기" : "DART 원문 보기", el("span", { "aria-hidden": "true", text: "↗" })),
+        el("p", { class: "d-corp" }, el("strong", { text: d.corp_name }), el("span", { class: `lv ${d.level}`, text: lv.label }), el("span", { class: "muted", text: meta }))),
+      el("p", { style: "margin:0" }, el("a", { class: "source", href: d.url, target: "_blank", rel: "noopener noreferrer" }, d.source === "alio" ? "알리오 원문" : "DART 원문")),
       el("dl", { class: "props" },
         el("dt", { text: "접수일" }), el("dd", { text: fmtDate(d.rcept_dt) }),
         el("dt", { text: "제출인" }), el("dd", { text: d.flr_nm || "-" }),
         el("dt", { text: "분류 근거" }), el("dd", { text: d.keyword ? `제목 키워드 ${d.keyword}` : "해당 키워드 없음" }),
         d.rm ? el("dt", { text: "비고" }) : null, d.rm ? el("dd", { text: d.rm }) : null,
-        el("dt", { text: "접수번호" }), el("dd", { class: "muted", text: d.rcept_no })),
-      el("section", {}, el("p", { class: "section-label", text: "처리 이력" }), el("ol", { class: "timeline" }, timeline),
-        mine ? el("div", { class: "d-actions", style: "margin-top:12px" }, el("button", { class: "btn sm", type: "button",
-          text: d.written_at ? "기사 URL 수정" : "기사화 기록", onclick: () => markWritten(d) })) : null),
-      state.me.llm_ready ? el("section", {}, el("p", { class: "section-label", text: "AI 질문" }),
-        el("div", { class: "ai-chips" },
-          el("button", { class: "ai-chip", type: "button", text: "핵심 요약", onclick: () => ask(`${d.corp_name} ${d.report_nm}(접수번호 ${d.rcept_no}) 핵심 요약`) }),
-          d.source !== "alio" ? el("button", { class: "ai-chip", type: "button", text: "전년 실적 비교", onclick: () => ask(`${d.corp_name} 최근 사업연도 매출액·영업이익·당기순이익 전년 대비`) }) : null,
-          el("button", { class: "ai-chip", type: "button", text: "최근 30일 공시", onclick: () => ask(`${d.corp_name} 최근 30일 공시 시간순 정리`) }))) : null,
+        el("dt", { text: "접수번호" }), el("dd", { class: "mono", text: d.rcept_no }),
+        el("dt", { text: "수집" }), el("dd", { text: fmtTime(d.first_seen_at) }),
+        el("dt", { text: "담당" }), el("dd", { text: d.claimed_name ? `${d.claimed_name} (${fmtTime(d.claimed_at)})` : "미지정" }),
+        el("dt", { text: "기사화" }), el("dd", {}, d.written_at ? (d.written_url ? el("a", { href: d.written_url, target: "_blank", rel: "noopener noreferrer", text: fmtTime(d.written_at) }) : fmtTime(d.written_at)) : "-")),
+      mine ? el("div", { class: "d-actions" }, el("button", { class: "btn sm", type: "button",
+        text: d.written_at ? "기사 URL 수정" : "기사화 기록", onclick: () => markWritten(d) })) : null,
+      state.me.llm_ready ? el("section", {}, el("h3", { class: "section-label", text: "AI 질문" }),
+        el("ul", { class: "text-list" },
+          el("li", {}, el("button", { class: "text-btn", type: "button", text: "핵심 요약", onclick: () => ask(`${d.corp_name} ${d.report_nm}(접수번호 ${d.rcept_no}) 핵심 요약`) })),
+          d.source !== "alio" ? el("li", {}, el("button", { class: "text-btn", type: "button", text: "전년 실적 비교", onclick: () => ask(`${d.corp_name} 최근 사업연도 매출액·영업이익·당기순이익 전년 대비`) })) : null,
+          el("li", {}, el("button", { class: "text-btn", type: "button", text: "최근 30일 공시", onclick: () => ask(`${d.corp_name} 최근 30일 공시 시간순 정리`) })))) : null,
       d.source !== "alio" ? el("p", { class: "muted small", text: "DART 공개는 제출 후 약 15분 늦습니다." }) : null),
   );
   panel.hidden = false;
@@ -466,27 +457,27 @@ function commands(query) {
   const it = currentItem();
   const go = (h) => () => (location.hash = h);
   const list = [
-    ...Object.entries(SPLITS).map(([k, v]) => ({ grp: "이동", icon: "→", label: v.title, key: v.key, run: go(`#s/${k}`) })),
-    { grp: "이동", icon: "✦", label: "AI 질문", run: go("#ask") },
-    { grp: "이동", icon: "✎", label: "기사 초안", run: go("#draft") },
-    { grp: "이동", icon: "₩", label: "공공기관 결산", run: go("#finance") },
-    { grp: "이동", icon: "✉", label: "보도자료 메일", run: go("#mail") },
-    { grp: "이동", icon: "⚙", label: "설정", run: go("#settings") },
-    state.me?.role === "admin" ? { grp: "이동", icon: "⌂", label: "관리자", run: go("#admin") } : null,
-    it ? { grp: "선택한 공시", icon: "✓", label: `확인 처리 · ${it.corp_name}`, key: "E", run: () => markDone(it) } : null,
-    it ? { grp: "선택한 공시", icon: "●", label: `${it.claimed_by === state.me.id ? "담당 해제" : "담당 지정"} · ${it.corp_name}`, key: "C", run: () => toggleClaim(it) } : null,
-    it ? { grp: "선택한 공시", icon: "↗", label: "원문 보기", key: "O", run: () => window.open(it.url, "_blank", "noopener") } : null,
-    it && state.me.llm_ready ? { grp: "선택한 공시", icon: "✎", label: "초안 작성", key: "D", run: go(`#draft/d/${encodeURIComponent(it.rcept_no)}`) } : null,
-    { grp: "작업", icon: "✓", label: "현재 목록 전체 확인 처리", run: () => $("#done-all").click() },
-    { grp: "작업", icon: "◔", label: "이 기기 알림 설정", run: () => enablePush().catch((e) => toast(e.message)) },
-    { grp: "보기", icon: "◐", label: "테마 전환 (시스템, 라이트, 다크)", run: cycleTheme },
-    { grp: "보기", icon: "≡", label: "목록 밀도 전환 (기본, 촘촘)", run: () => applyDensity(store.get("nb-density") === "compact" ? "comfy" : "compact") },
-    { grp: "도움말", icon: "?", label: "단축키 J/K 이동, Enter 열기, E 확인, C 담당, O 원문, D 초안, Z 실행 취소, 1~6 목록 전환", run: () => {} },
+    ...Object.entries(SPLITS).map(([k, v]) => ({ grp: "이동", label: v.title, key: v.key, run: go(`#s/${k}`) })),
+    { grp: "이동", label: "AI 질문", run: go("#ask") },
+    { grp: "이동", label: "기사 초안", run: go("#draft") },
+    { grp: "이동", label: "공공기관 결산", run: go("#finance") },
+    { grp: "이동", label: "보도자료 메일", run: go("#mail") },
+    { grp: "이동", label: "설정", run: go("#settings") },
+    state.me?.role === "admin" ? { grp: "이동", label: "관리자", run: go("#admin") } : null,
+    it ? { grp: "선택한 공시", label: `확인 처리 · ${it.corp_name}`, key: "E", run: () => markDone(it) } : null,
+    it ? { grp: "선택한 공시", label: `${it.claimed_by === state.me.id ? "담당 해제" : "담당 지정"} · ${it.corp_name}`, key: "C", run: () => toggleClaim(it) } : null,
+    it ? { grp: "선택한 공시", label: "원문 보기", key: "O", run: () => window.open(it.url, "_blank", "noopener") } : null,
+    it && state.me.llm_ready ? { grp: "선택한 공시", label: "초안 작성", key: "D", run: go(`#draft/d/${encodeURIComponent(it.rcept_no)}`) } : null,
+    { grp: "작업", label: "현재 목록 전체 확인 처리", run: () => $("#done-all").click() },
+    { grp: "작업", label: "이 기기 알림 설정", run: () => enablePush().catch((e) => toast(e.message)) },
+    { grp: "보기", label: "테마 전환 (시스템, 라이트, 다크)", run: cycleTheme },
+    { grp: "보기", label: "목록 밀도 전환 (기본, 촘촘)", run: () => applyDensity(store.get("nb-density") === "compact" ? "comfy" : "compact") },
+    { grp: "도움말", label: "단축키 J/K 이동, Enter 열기, E 확인, C 담당, O 원문, D 초안, Z 실행 취소, 1~6 목록 전환", run: () => {} },
   ].filter(Boolean);
   const q = query.trim().toLowerCase();
   const hits = q ? list.filter((c) => c.label.toLowerCase().includes(q) || c.grp.includes(q)) : list;
-  if (q && state.me?.llm_ready) hits.unshift({ grp: "AI", icon: "✦", label: `AI에게 질문: ${query.trim()}`, run: () => { location.hash = "#ask"; setTimeout(() => sendQuestion(query.trim()), 50); } });
-  if (q) hits.push({ grp: "검색", icon: "⌕", label: `공시 검색: ${query.trim()}`, run: () => { $("#search").value = query.trim(); state.q = query.trim(); if (location.hash === "#s/all") loadList(true); else location.hash = "#s/all"; } });
+  if (q && state.me?.llm_ready) hits.unshift({ grp: "AI", label: `AI에게 질문: ${query.trim()}`, run: () => { location.hash = "#ask"; setTimeout(() => sendQuestion(query.trim()), 50); } });
+  if (q) hits.push({ grp: "검색", label: `공시 검색: ${query.trim()}`, run: () => { $("#search").value = query.trim(); state.q = query.trim(); if (location.hash === "#s/all") loadList(true); else location.hash = "#s/all"; } });
   return hits;
 }
 function renderPalette() {
@@ -577,7 +568,7 @@ function linkify(text) {
 }
 function answerBubble(answer, trace = []) {
   const b = el("div", { class: "bubble a" }, linkify(answer));
-  if (trace.length) b.append(el("div", { class: "tools" }, [...new Set(trace.map((t) => TOOL_NAMES[t.tool] || t.tool))].map((n) => el("span", { class: "chip-s", text: n }))));
+  if (trace.length) b.append(el("div", { class: "tools" }, [...new Set(trace.map((t) => TOOL_NAMES[t.tool] || t.tool))].map((n) => el("span", { class: "tag-s", text: n }))));
   return b;
 }
 async function renderChats() {
@@ -591,8 +582,9 @@ async function renderChats() {
   const { items } = await api("/api/chats");
   box.replaceChildren(...items.reverse().flatMap((c) => [el("div", { class: "bubble q", text: c.question }), answerBubble(c.answer, c.trace)]));
   if (!items.length) {
-    box.append(el("div", { class: "ai-chips" }, ["이번 주 기술이전 공시 목록", "서울대병원 2025년 의료수익 전년 대비", "유한양행 2025년 매출액과 영업이익"].map((q) =>
-      el("button", { class: "ai-chip", type: "button", text: q, onclick: () => sendQuestion(q) }))));
+    box.append(el("div", { class: "examples" }, el("p", { class: "muted small", text: "질문 예" }),
+      el("ul", { class: "text-list" }, ["이번 주 기술이전 공시 목록", "서울대병원 2025년 의료수익 전년 대비", "유한양행 2025년 매출액과 영업이익"].map((q) =>
+        el("li", {}, el("button", { class: "text-btn", type: "button", text: q, onclick: () => sendQuestion(q) }))))));
   }
   box.lastElementChild?.scrollIntoView({ block: "end" });
   $("#ask-input").focus({ preventScroll: true });
@@ -604,7 +596,7 @@ async function sendQuestion(q) {
   const input = $("#ask-input");
   input.value = "";
   input.disabled = true;
-  $(".ai-chips", $("#chat"))?.remove();
+  $(".examples", $("#chat"))?.remove();
   const pending = el("div", { class: "bubble a muted", text: "자료 검색 중" });
   $("#chat").append(el("div", { class: "bubble q", text: q }), pending);
   pending.scrollIntoView({ block: "end" });
@@ -677,7 +669,7 @@ async function renderFinance() {
   $("#alio-missing").textContent = a.missing.length ? `알리오에 없는 기관명: ${a.missing.join(", ")}. config/alio.toml의 표기를 확인하세요.` : "";
   $("#alio-finance").replaceChildren(...(a.finance.length ? a.finance.map((f) => el("section", { class: "card stack" },
     el("div", { class: "row between" }, el("h2", { class: "h3", text: f.org }),
-      el("a", { class: "source", href: f.url, target: "_blank", rel: "noopener noreferrer" }, "알리오 원문 ↗")),
+      el("a", { class: "source", href: f.url, target: "_blank", rel: "noopener noreferrer" }, "알리오 원문")),
     el("p", { class: "muted small", style: "margin:0", text: [f.title, f.unit].filter(Boolean).join(" · ") }),
     el("table", { class: "fin" }, el("thead", {}, el("tr", {}, ["항목", "당기", "전기", "증감", "증감률"].map((h) => el("th", { scope: "col", text: h })))),
       el("tbody", {}, f.items.map((i) => el("tr", {},
@@ -836,9 +828,9 @@ async function checkPushButton() {
 async function renderAdmin() {
   const [st, us, mt] = await Promise.all([api("/api/admin/status"), api("/api/admin/users"), api("/api/admin/metrics")]);
   const t = mt.totals;
-  const stat = (label, v, alert) => el("span", { class: `stat${alert ? " alert" : ""}` }, label, el("strong", { text: v }));
-  $("#metrics-totals").replaceChildren(stat("수집 공시", `${t.disclosures}건`), stat("중요", `${t.red}건`, true), stat("보낸 알림", `${t.alerts}건`),
-    stat("가동률", t.uptime_pct == null ? "키 없음" : `${t.uptime_pct}%`), stat("AI 비용", `${t.cost_krw.toLocaleString("ko-KR")}원`));
+  const kv = (k, v) => [el("dt", { text: k }), el("dd", { text: v })];
+  $("#metrics-totals").replaceChildren(...kv("수집 공시", `${t.disclosures}건 (중요 ${t.red}건)`), ...kv("발송 알림", `${t.alerts}건`),
+    ...kv("수집 가동률", t.uptime_pct == null ? "DART 인증키 없음" : `${t.uptime_pct}%`), ...kv("AI 비용", `${t.cost_krw.toLocaleString("ko-KR")}원`));
   $("#metrics-users").replaceChildren(...mt.users.map((u) => el("tr", {}, el("td", { text: u.display_name }), el("td", { text: u.claims }),
     el("td", { text: u.written }), el("td", { text: u.questions }), el("td", { text: u.drafts }), el("td", { text: `${u.cost_krw.toLocaleString("ko-KR")}원` }))));
   $("#admin-status").replaceChildren(
