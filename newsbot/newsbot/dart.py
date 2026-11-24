@@ -117,31 +117,49 @@ class DartClient:
                 texts.append(re.sub(r"\n\s*\n+", "\n", text).strip())
         return "\n".join(texts)[:limit]
 
-    async def corp_code(self, name: str, cache_path) -> str | None:
-        """회사명 → DART 고유번호. 전체 목록(corpCode.xml)을 주 1회 받아 파일로 캐시한다."""
+    async def corp_list(self, cache_path) -> list[dict]:
+        """DART 전체 회사 목록(corpCode.xml). 주 1회 받아 파일로 저장한다. 상장사는 stock_code 가 있다."""
         import json
         import time
         from pathlib import Path
 
-        row = self.db.one("SELECT corp_code FROM companies WHERE corp_name=?", (name,))
-        if row:
-            return row["corp_code"]
         path = Path(cache_path)
         if not path.exists() or time.time() - path.stat().st_mtime > 7 * 86400:
             resp = await self._fetch("corpCode.xml", {})
             with zipfile.ZipFile(io.BytesIO(resp.content)) as z:
                 xml = z.read(z.namelist()[0]).decode("utf-8", errors="replace")
-            mapping = {}
-            for m in re.finditer(r"<corp_code>(\d+)</corp_code>\s*<corp_name>([^<]+)</corp_name>", xml):
-                mapping[m.group(2).strip()] = m.group(1)
+            corps = []
+            for block in re.findall(r"<list>(.*?)</list>", xml, re.S):
+                code = re.search(r"<corp_code>\s*(\d+)\s*</corp_code>", block)
+                name = re.search(r"<corp_name>([^<]*)</corp_name>", block)
+                stock = re.search(r"<stock_code>([^<]*)</stock_code>", block)
+                if code and name:
+                    corps.append({"corp_code": code.group(1), "corp_name": html.unescape(name.group(1).strip()),
+                                  "stock_code": (stock.group(1).strip() if stock else "")})
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps(mapping, ensure_ascii=False), encoding="utf-8")
-        mapping = json.loads(path.read_text(encoding="utf-8"))
+            path.write_text(json.dumps(corps, ensure_ascii=False), encoding="utf-8")
+        if getattr(self, "_corps_mtime", None) != path.stat().st_mtime:
+            self._corps = json.loads(path.read_text(encoding="utf-8"))
+            self._corps_mtime = path.stat().st_mtime
+        return self._corps
+
+    async def corp_code(self, name: str, cache_path) -> str | None:
+        """회사명 → DART 고유번호 (띄어쓰기 무시, 상장사 우선)."""
+        from pathlib import Path
+
+        row = self.db.one("SELECT corp_code FROM companies WHERE corp_name=?", (name,))
+        if row:
+            return row["corp_code"]
         key = "".join(name.split())
-        for n, code in mapping.items():
-            if "".join(n.split()) == key:
-                return code
-        return None
+        hits = [c for c in await self.corp_list(Path(cache_path).with_name("corp_list.json"))
+                if "".join(c["corp_name"].split()) == key]
+        hits.sort(key=lambda c: not c["stock_code"])
+        return hits[0]["corp_code"] if hits else None
+
+    async def company_filings(self, corp_code: str, bgn_de: str, end_de: str, page_no: int) -> dict:
+        """한 회사의 공시 목록. 회사 고유번호를 주면 기간 제한 없이 조회된다."""
+        return await self._get("list.json", {"corp_code": corp_code, "bgn_de": bgn_de, "end_de": end_de,
+                                             "page_no": page_no, "page_count": PAGE_COUNT})
 
     async def financials(self, corp_code: str, year: int, reprt_code: str = "11011") -> list[dict]:
         """단일회사 주요계정 (사업보고서 기준). 매출액·영업이익·당기순이익 등."""
@@ -164,6 +182,12 @@ class Collector:
         self.db = db
         self.rules = rules
         self.rescan_pages = rescan_pages
+
+    def _subscribed(self, corp_name: str) -> bool:
+        """기자가 설정에서 '기업'으로 구독한 회사는 보건의료 업종이 아니어도 수집한다."""
+        return bool(self.db.one("SELECT 1 FROM subscriptions s JOIN users u ON u.id=s.user_id "
+                                "WHERE u.active=1 AND s.kind='company' AND REPLACE(s.value,' ','')=?",
+                                ("".join(corp_name.split()),)))
 
     async def _industry(self, corp_code: str, corp_name: str) -> str | None:
         row = self.db.one("SELECT induty_code FROM companies WHERE corp_code=?", (corp_code,))
@@ -229,10 +253,11 @@ class Collector:
         corp_name = item.get("corp_name", "")
         corp_code = item.get("corp_code", "")
         watched = self.rules.is_watched(corp_name)
+        subscribed = self._subscribed(corp_name)
         induty = None
-        if not watched and self.rules.needs_industry_lookup(corp_name):
+        if not (watched or subscribed) and self.rules.needs_industry_lookup(corp_name):
             induty = await self._industry(corp_code, corp_name)
-        if not self.rules.is_relevant(corp_name, induty):
+        if not (subscribed or self.rules.is_relevant(corp_name, induty)):
             return None
 
         c = self.rules.classify(item.get("report_nm", ""))

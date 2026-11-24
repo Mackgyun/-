@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
-from . import auth, mail, qa, writing
+from . import auth, company, mail, qa, writing
 from .alio import AlioClient, AlioCollector, AlioConfig, finance_overview, parse_tables
 from .articles import ArticleCollector
 from .config import KST, Settings
@@ -46,6 +46,13 @@ class RegisterIn(BaseModel):
 class SubIn(BaseModel):
     kind: str = Field(pattern=r"^(all|watch|company|keyword)$")
     value: str = Field(default="", max_length=60)
+    levels: str = Field(default="red", pattern=r"^(red|all)$")
+
+
+class CompanySummaryIn(BaseModel):
+    name: str = Field(min_length=1, max_length=60)
+    corp_code: str | None = Field(default=None, pattern=r"^\d{8}$")
+    years: int = Field(default=3, ge=1, le=10)
 
 
 class PushIn(BaseModel):
@@ -346,7 +353,8 @@ def create_app(settings: Settings, db: Database | None = None, start_poller: boo
 
     @app.get("/api/me")
     def me(user: dict = Depends(current_user)):
-        subs = db.query("SELECT kind, value FROM subscriptions WHERE user_id=? ORDER BY kind, value", (user["id"],))
+        subs = db.query("SELECT kind, value, levels FROM subscriptions WHERE user_id=? ORDER BY kind, value",
+                        (user["id"],))
         devices = db.one("SELECT COUNT(*) n FROM push_subs WHERE user_id=?", (user["id"],))["n"]
         articles_n = db.one("SELECT COUNT(*) n FROM articles WHERE author_id=?",
                             ((user.get("reporter_id") or "").lower(),))["n"]
@@ -550,7 +558,7 @@ def create_app(settings: Settings, db: Database | None = None, start_poller: boo
     async def ask(body: AskIn, user: dict = Depends(current_user)):
         loop = asyncio.get_running_loop()
         return await asyncio.to_thread(qa.ask, settings, db, llm, user, body.question.strip(),
-                                       poller.client if settings.dart_api_key else None, loop)
+                                       poller.client if settings.dart_api_key else None, loop, rules)
 
     @app.get("/api/chats")
     def chats(user: dict = Depends(current_user)):
@@ -734,9 +742,46 @@ def create_app(settings: Settings, db: Database | None = None, start_poller: boo
         value = body.value.strip() if body.kind in ("company", "keyword") else ""
         if body.kind in ("company", "keyword") and not value:
             raise HTTPException(400, "기업명 또는 키워드를 입력하세요.")
-        db.execute("INSERT OR IGNORE INTO subscriptions(user_id, kind, value) VALUES(?,?,?)",
-                   (user["id"], body.kind, value))
+        levels = body.levels if body.kind == "company" else "red"
+        db.execute("""INSERT INTO subscriptions(user_id, kind, value, levels) VALUES(?,?,?,?)
+                      ON CONFLICT(user_id, kind, value) DO UPDATE SET levels=excluded.levels""",
+                   (user["id"], body.kind, value, levels))
         return {"ok": True}
+
+    # --- 기업 히스토리 ---------------------------------------------------
+    def _dart():
+        return poller.client if settings.dart_api_key else None
+
+    @app.get("/api/companies")
+    async def companies(q: str = "", user: dict = Depends(current_user)):
+        if len(q.strip()) < 1:
+            return {"items": []}
+        try:
+            items = await company.find_companies(_dart(), db, settings.data_dir, q)
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(502, f"DART 회사 목록을 불러오지 못했습니다: {redact(e)}") from e
+        return {"items": items}
+
+    @app.get("/api/company")
+    async def company_view(name: str = "", corp_code: str = "", years: int = 3, user: dict = Depends(current_user)):
+        if not name.strip() and not corp_code:
+            raise HTTPException(400, "회사명을 입력하세요.")
+        if corp_code and not corp_code.isdigit():
+            raise HTTPException(400, "회사 고유번호가 올바르지 않습니다.")
+        return await company.history(db, rules, _dart(), settings.data_dir, name.strip(), corp_code or None,
+                                     years, user["id"])
+
+    @app.post("/api/company/summary")
+    async def company_summary(body: CompanySummaryIn, user: dict = Depends(current_user)):
+        h = await company.history(db, rules, _dart(), settings.data_dir, body.name.strip(), body.corp_code,
+                                  body.years, user["id"])
+        if not h.get("company"):
+            raise HTTPException(404, h.get("notice") or "회사를 찾지 못했습니다.")
+        if not h["filings"] and not h["articles"]:
+            raise HTTPException(400, "정리할 공시나 기사가 없습니다.")
+        text, model = await asyncio.to_thread(llm.complete, company.SUMMARY_SYSTEM, company.summary_prompt(h),
+                                              "main", user["id"], "company_history")
+        return {"summary": text.strip(), "model": model}
 
     @app.delete("/api/subscriptions")
     def del_sub(kind: str, value: str = "", user: dict = Depends(current_user)):

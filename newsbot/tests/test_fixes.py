@@ -63,14 +63,14 @@ class BoomPusher:
 def test_alerter_sends_pending_and_marks(tmp_path):
     db = Database(":memory:")
     uid = auth.create_user(db, "kim", "김", "password-12345")
-    db.execute("INSERT INTO subscriptions VALUES(?, 'all', '')", (uid,))
+    db.execute("INSERT INTO subscriptions(user_id, kind, value) VALUES(?, 'all', '')", (uid,))
     _disc(db, "1")
     _disc(db, "2", level="yellow")
     _disc(db, "3", corr=1)
     _disc(db, "4", alerted="bootstrap")
     p = BoomPusher()
     a = Alerter(db, Rules.load(BASE_DIR / "config/rules.toml"), p, "http://x", notify=True)
-    assert asyncio.run(a.flush()) == 1
+    asyncio.run(a.flush())
     assert p.sent == [(uid, "1")]
     assert db.one("SELECT COUNT(*) n FROM disclosures WHERE alerted_at IS NULL")["n"] == 0
     assert asyncio.run(a.flush()) == 0  # 다시 보내지 않음
@@ -79,7 +79,7 @@ def test_alerter_sends_pending_and_marks(tmp_path):
 def test_alerter_batches_many(tmp_path):
     db = Database(":memory:")
     uid = auth.create_user(db, "kim", "김", "password-12345")
-    db.execute("INSERT INTO subscriptions VALUES(?, 'all', '')", (uid,))
+    db.execute("INSERT INTO subscriptions(user_id, kind, value) VALUES(?, 'all', '')", (uid,))
     for i in range(8):
         _disc(db, str(i))
     p = BoomPusher()

@@ -68,7 +68,7 @@ def test_invite_register_and_claim_conflict(ctx):
                                           "password": "reporter-pass-2"})
     assert r.status_code == 400
     me = other.get("/api/me").json()
-    assert {"kind": "watch", "value": ""} in me["subscriptions"]
+    assert {"kind": "watch", "value": "", "levels": "red"} in me["subscriptions"]
 
 
 def test_login_lockout(ctx):
@@ -83,7 +83,7 @@ def test_subscriptions_and_push_key(ctx):
     login(client)
     assert client.post("/api/subscriptions", json={"kind": "company", "value": ""}).status_code == 400
     assert client.post("/api/subscriptions", json={"kind": "keyword", "value": "기술이전"}).status_code == 200
-    assert {"kind": "keyword", "value": "기술이전"} in client.get("/api/me").json()["subscriptions"]
+    assert {"kind": "keyword", "value": "기술이전", "levels": "red"} in client.get("/api/me").json()["subscriptions"]
     key = client.get("/api/push/key").json()["key"]
     assert len(key) > 80
     assert client.post("/api/push/test").json()["sent"] == 0  # 등록 기기 없음
@@ -106,9 +106,9 @@ def test_recipients():
     a = auth.create_user(db, "a", "A", "password-123")
     b = auth.create_user(db, "b", "B", "password-123")
     c = auth.create_user(db, "c", "C", "password-123")
-    db.execute("INSERT INTO subscriptions VALUES(?, 'company', '유한 양행')", (a,))
-    db.execute("INSERT INTO subscriptions VALUES(?, 'keyword', '기술이전')", (b,))
-    db.execute("INSERT INTO subscriptions VALUES(?, 'company', '한미약품')", (c,))
+    db.execute("INSERT INTO subscriptions(user_id, kind, value) VALUES(?, 'company', '유한 양행')", (a,))
+    db.execute("INSERT INTO subscriptions(user_id, kind, value) VALUES(?, 'keyword', '기술이전')", (b,))
+    db.execute("INSERT INTO subscriptions(user_id, kind, value) VALUES(?, 'company', '한미약품')", (c,))
     row = {"corp_name": "유한양행", "report_nm": "기술이전계약체결", "watched": 1}
     assert recipients(db, Rules(), row) == [a, b]
 

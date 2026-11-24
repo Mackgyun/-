@@ -124,7 +124,7 @@ $("#logout-btn").addEventListener("click", async () => {
 });
 
 // ---------- 화면 전환 ----------
-const VIEWS = ["list", "ask", "draft", "finance", "mail", "settings", "admin"];
+const VIEWS = ["list", "ask", "draft", "finance", "company", "mail", "settings", "admin"];
 function setView(view, navKey) {
   if (view === "admin" && state.me?.role !== "admin") view = "list";
   state.view = view;
@@ -135,6 +135,7 @@ function setView(view, navKey) {
   if (view === "ask") renderChats();
   if (view === "draft") renderDrafts();
   if (view === "finance") renderFinance();
+  if (view === "company") renderCompany();
   if (view === "mail") renderMail();
   if (view === "settings") renderSettings();
   if (view === "admin") renderAdmin();
@@ -155,6 +156,7 @@ function route() {
     return setView("draft", "draft");
   }
   if (h === "draft") state.draftSource = null;
+  if (h === "company" || h.startsWith("company/")) return setView("company", "company");
   if (h.startsWith("s/") && SPLITS[h.slice(2)]) {
     closeDetail(true);  // 뒤로 가기·목록 이동이면 상세(휴대폰에서는 전체 화면)를 닫는다
     const changed = state.split !== h.slice(2) || state.view !== "list";
@@ -411,7 +413,9 @@ async function openDetail(id, quiet) {
       el("div", { class: "d-head" },
         el("h2", { class: "d-title", text: d.report_nm }),
         el("p", { class: "d-corp" }, el("strong", { text: d.corp_name }), el("span", { class: `lv ${d.level}`, text: lv.label }), el("span", { class: "muted", text: meta }))),
-      el("p", { style: "margin:0" }, el("a", { class: "source", href: d.url, target: "_blank", rel: "noopener noreferrer" }, d.source === "alio" ? "알리오 원문" : "DART 원문")),
+      el("p", { class: "row", style: "margin:0;gap:16px" },
+        el("a", { class: "source", href: d.url, target: "_blank", rel: "noopener noreferrer" }, d.source === "alio" ? "알리오 원문" : "DART 원문"),
+        d.source !== "alio" ? el("a", { class: "source", href: `#company/c/${d.corp_code}/${encodeURIComponent(d.corp_name)}` }, "이 회사 히스토리") : null),
       el("dl", { class: "props" },
         el("dt", { text: "접수일" }), el("dd", { text: fmtDate(d.rcept_dt) }),
         el("dt", { text: "제출인" }), el("dd", { text: d.flr_nm || "-" }),
@@ -465,6 +469,7 @@ function commands(query) {
     ...Object.entries(SPLITS).map(([k, v]) => ({ grp: "이동", label: v.title, key: v.key, run: go(`#s/${k}`) })),
     { grp: "이동", label: "AI 질문", run: go("#ask") },
     { grp: "이동", label: "기사 초안", run: go("#draft") },
+    { grp: "이동", label: "기업 히스토리", run: go("#company") },
     { grp: "이동", label: "공공기관 결산", run: go("#finance") },
     { grp: "이동", label: "보도자료 메일", run: go("#mail") },
     { grp: "이동", label: "설정", run: go("#settings") },
@@ -472,6 +477,7 @@ function commands(query) {
     it ? { grp: "선택한 공시", label: `확인 처리 · ${it.corp_name}`, key: "E", run: () => markDone(it) } : null,
     it ? { grp: "선택한 공시", label: `${it.claimed_by === state.me.id ? "담당 해제" : "담당 지정"} · ${it.corp_name}`, key: "C", run: () => toggleClaim(it) } : null,
     it ? { grp: "선택한 공시", label: "원문 보기", key: "O", run: () => window.open(it.url, "_blank", "noopener") } : null,
+    it && it.source !== "alio" ? { grp: "선택한 공시", label: `기업 히스토리 · ${it.corp_name}`, run: go(`#company/c/${it.corp_code}/${encodeURIComponent(it.corp_name)}`) } : null,
     it && state.me.llm_ready ? { grp: "선택한 공시", label: "초안 작성", key: "D", run: go(`#draft/d/${encodeURIComponent(it.rcept_no)}`) } : null,
     { grp: "작업", label: "현재 목록 전체 확인 처리", run: () => $("#done-all").click() },
     { grp: "작업", label: "이 기기 알림 설정", run: () => enablePush().catch((e) => toast(e.message)) },
@@ -685,6 +691,157 @@ async function renderFinance() {
     : [el("div", { class: "empty" }, el("strong", { text: "수집된 결산이 없습니다" }), el("span", { text: "결산 공시(통상 3~4월)가 올라오면 전년 대비 표가 생성됩니다." }))]));
 }
 
+// ---------- 기업 히스토리 ----------
+const eok = (v) => {
+  if (v == null) return "-";
+  if (Math.abs(v) >= 1e8) return `${(v / 1e8).toLocaleString("ko-KR", { maximumFractionDigits: 1 })}억원`;
+  return `${Math.round(v / 1e4).toLocaleString("ko-KR")}만원`;
+};
+const ymd = (s) => (s && s.length === 8 ? `${s.slice(0, 4)}.${s.slice(4, 6)}.${s.slice(6)}` : s || "");
+const company = { data: null, all: false, summary: null, candTimer: null };
+
+function companyRoute() {
+  // #company, #company/회사명, #company/c/고유번호/회사명
+  const rest = decodeURIComponent(location.hash.slice(1)).replace(/^company\/?/, "");
+  if (!rest) return null;
+  if (rest.startsWith("c/")) { const [, code, ...name] = rest.split("/"); return { corp_code: code, name: name.join("/") }; }
+  return { name: rest };
+}
+
+async function renderCompany() {
+  const r = companyRoute();
+  $("#company-cands").hidden = true;
+  if (!r) { $("#company-q").focus(); return; }
+  $("#company-q").value = r.name || "";
+  const years = $("#company-years").value;
+  $("#company-body").replaceChildren(...Array.from({ length: 6 }, () => el("div", { class: "skeleton", "aria-hidden": "true" })));
+  const p = new URLSearchParams({ name: r.name || "", years });
+  if (r.corp_code) p.set("corp_code", r.corp_code);
+  try {
+    company.data = await api(`/api/company?${p}`);
+    company.summary = null;
+    drawCompany();
+  } catch (e) {
+    $("#company-body").replaceChildren(el("p", { class: "error", text: e.message }));
+  }
+}
+
+function drawCompany() {
+  const h = company.data;
+  const body = $("#company-body");
+  if (!h.company) { body.replaceChildren(el("div", { class: "empty" }, el("strong", { text: "회사를 찾지 못했습니다" }), el("span", { text: h.notice || "" }))); return; }
+  const c = h.company;
+  const shown = company.all ? h.filings : h.filings.filter((f) => f.level !== "gray");
+  const sub = el("select", { "aria-label": "이 회사 공시 알림", onchange: (e) => setCompanySub(c.corp_name, e.target.value) },
+    ...[["", "알림 받지 않음"], ["red", "중요 공시만 알림"], ["all", "모든 공시 알림"]].map(([v, t]) =>
+      el("option", { value: v, text: t, ...(String(c.subscription || "") === v ? { selected: "selected" } : {}) })));
+  const groups = [];
+  let last = "";
+  for (const f of shown) {
+    const ym = (f.rcept_dt || "").slice(0, 6);
+    if (ym !== last) { groups.push(el("div", { class: "group-head", role: "presentation" }, `${ym.slice(0, 4)}년 ${Number(ym.slice(4))}월`)); last = ym; }
+    groups.push(el("div", { class: "item hist", role: "listitem" },
+      el("span", { class: `lv ${f.level}`, text: (LV[f.level] || LV.yellow).label }),
+      el("time", { class: "who mono", datetime: f.rcept_dt, text: ymd(f.rcept_dt).slice(5) }),
+      f.in_feed ? el("a", { class: "title", href: `#d/${encodeURIComponent(f.rcept_no)}`, text: f.report_nm, title: f.report_nm })
+        : el("a", { class: "title", href: f.url, target: "_blank", rel: "noopener noreferrer", text: f.report_nm, title: f.report_nm }),
+      el("span", { class: "meta" },
+        f.is_correction ? el("span", { class: "tag-s fix", text: "정정" }) : null,
+        f.claimed_name ? el("span", { class: "claimed-by", text: f.written_url ? `${f.claimed_name} 기사화` : `담당 ${f.claimed_name}` }) : null)));
+  }
+  const fin = h.financials;
+  body.replaceChildren(...[  // replaceChildren 은 null 을 글자 "null" 로 넣으므로 걸러 낸다
+    el("div", { class: "company-head" },
+      el("div", {},
+        el("h2", { class: "d-title", text: c.corp_name }),
+        el("p", { class: "d-corp" }, el("span", { text: [c.stock_code ? `상장 ${c.stock_code}` : "비상장", `DART ${c.corp_code}`, `최근 ${h.years}년`, c.watched ? "감시 기업" : null].filter(Boolean).join(" · ") }))),
+      el("div", { class: "row" }, sub,
+        state.me.llm_ready ? el("button", { class: "btn", type: "button", id: "company-ai", text: "AI 타임라인 요약", onclick: summarizeCompany }) : null,
+        el("a", { class: "btn ghost", href: `https://dart.fss.or.kr/dsab007/main.do?textCrpNm=${encodeURIComponent(c.corp_name)}`, target: "_blank", rel: "noopener noreferrer", text: "DART에서 보기" }))),
+    h.notice ? el("p", { class: "banner", text: h.notice }) : null,
+    company.summary ? el("section", { class: "card stack" }, el("h3", { class: "section-label", text: "AI 타임라인 요약" }),
+      el("p", { class: "pre", text: company.summary.summary }),
+      el("p", { class: "muted small", text: `${company.summary.model} · 공시 목록과 기사 제목만 근거로 작성했습니다. 원문으로 확인한 뒤 쓰세요.` })) : null,
+    fin && fin.rows.length ? el("section", { class: "stack" }, el("h3", { class: "section-label", text: `주요 실적 (${fin.year}년 사업보고서, ${fin.fs})` }),
+      el("table", { class: "fin" },
+        el("thead", {}, el("tr", {}, el("th", { scope: "col", text: "계정" }), ...(fin.rows[0].values.map((v) => el("th", { scope: "col", text: `${v.year}년` }))))),
+        el("tbody", {}, fin.rows.map((r) => el("tr", {}, el("td", { text: r.account }), ...r.values.map((v) => el("td", { text: eok(v.amount) }))))))) : null,
+    el("section", { class: "stack" },
+      el("div", { class: "row between" },
+        el("h3", { class: "section-label", text: `공시 ${shown.length}건` }),
+        el("p", { class: "figures" }, `중요 `, el("span", { class: "num", text: h.counts.red }), el("span", { class: "sep", text: "·" }),
+          `일반 `, el("span", { class: "num", text: h.counts.yellow }), el("span", { class: "sep", text: "·" }),
+          `기록 `, el("span", { class: "num", text: h.counts.gray }), el("span", { class: "sep", text: "·" }),
+          el("button", { class: "text-btn", type: "button", text: company.all ? "기록성 공시 숨기기" : "기록성 공시도 보기", onclick: () => { company.all = !company.all; drawCompany(); } }))),
+      shown.length ? el("div", { class: "feed", role: "list" }, groups) : el("p", { class: "muted", text: "해당 기간 공시가 없습니다." })),
+    el("section", { class: "stack" },
+      el("h3", { class: "section-label", text: `청년의사 과거 기사 ${h.articles.length}건` }),
+      h.articles.length ? el("ul", { class: "text-list" }, h.articles.map((a) => el("li", { class: "article-row" },
+        el("time", { class: "mono muted", text: a.published_at }), el("a", { href: a.url, target: "_blank", rel: "noopener noreferrer", text: a.title }),
+        a.author ? el("span", { class: "muted small", text: a.author }) : null)))
+        : el("p", { class: "muted small", text: "수집된 자사 기사 중 이 회사 이름이 들어간 기사가 없습니다. 설정에서 기사 수집을 하면 늘어납니다." })),
+  ].filter(Boolean));
+}
+
+async function summarizeCompany() {
+  const c = company.data.company;
+  const btn = $("#company-ai");
+  btn.disabled = true; btn.textContent = "요약 중";
+  try {
+    company.summary = await api("/api/company/summary", { method: "POST", body: { name: c.corp_name, corp_code: c.corp_code, years: Number(company.data.years) } });
+    drawCompany();
+  } catch (e) { toast(e.message); btn.disabled = false; btn.textContent = "AI 타임라인 요약"; }
+}
+
+async function setCompanySub(name, levels) {
+  try {
+    if (!levels) await api(`/api/subscriptions?kind=company&value=${encodeURIComponent(name)}`, { method: "DELETE" });
+    else await api("/api/subscriptions", { method: "POST", body: { kind: "company", value: name, levels } });
+    company.data.company.subscription = levels || null;
+    toast(levels ? `${name} ${levels === "all" ? "모든 공시" : "중요 공시"}를 알림으로 받습니다.` : `${name} 알림을 끊었습니다.`);
+    loadCounts().catch(() => {});
+  } catch (e) { toast(e.message); }
+}
+
+function goCompany(c) {
+  $("#company-cands").hidden = true;
+  const target = c.corp_code ? `#company/c/${c.corp_code}/${encodeURIComponent(c.corp_name)}` : `#company/${encodeURIComponent(c.corp_name)}`;
+  if (location.hash === target) renderCompany(); else location.hash = target;
+}
+
+$("#company-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const q = $("#company-q").value.trim();
+  if (!q) return;
+  const sel = $("#company-cands [aria-selected=true] button");
+  if (!$("#company-cands").hidden && sel) { sel.click(); return; }
+  goCompany({ corp_name: q });
+});
+$("#company-q").addEventListener("keydown", (e) => {
+  const opts = $$("#company-cands li");
+  if ($("#company-cands").hidden || !opts.length || !["ArrowDown", "ArrowUp", "Escape"].includes(e.key)) return;
+  e.preventDefault();
+  if (e.key === "Escape") { $("#company-cands").hidden = true; return; }
+  let i = opts.findIndex((o) => o.getAttribute("aria-selected") === "true");
+  i = e.key === "ArrowDown" ? Math.min(i + 1, opts.length - 1) : Math.max(i - 1, 0);
+  opts.forEach((o, j) => o.setAttribute("aria-selected", j === i ? "true" : "false"));
+});
+$("#company-years").addEventListener("change", () => { if (companyRoute()) renderCompany(); });
+$("#company-q").addEventListener("input", (e) => {
+  clearTimeout(company.candTimer);
+  const q = e.target.value.trim();
+  if (!q) { $("#company-cands").hidden = true; return; }
+  company.candTimer = setTimeout(async () => {
+    try {
+      const { items } = await api(`/api/companies?q=${encodeURIComponent(q)}`);
+      const list = $("#company-cands");
+      list.replaceChildren(...items.map((c, i) => el("li", { role: "option", "aria-selected": i === 0 ? "true" : "false" },
+        el("button", { type: "button", onclick: () => goCompany(c) }, c.corp_name, el("span", { class: "muted small", text: c.stock_code ? `  상장 ${c.stock_code}` : "  비상장" })))));
+      list.hidden = !items.length;
+    } catch { /* 후보는 보조 기능이라 조용히 넘어감 */ }
+  }, 250);
+});
+
 // ---------- 메일 ----------
 async function renderMail() {
   const off = !state.me.mail_enabled;
@@ -694,7 +851,7 @@ async function renderMail() {
   const { items } = await api("/api/mail");
   $("#mail-list").replaceChildren(...(items.length ? items.map((m) => el("div", { class: "item", role: "listitem", tabindex: "0",
     onclick: () => openMail(m.id), onkeydown: (e) => { if (e.key === "Enter") openMail(m.id); } },
-    el("span", { class: "lv", text: "✉" }), el("span", { class: "who", text: m.sender }), el("span", { class: "title", text: m.subject }),
+    el("span", { class: "lv", text: "메일" }), el("span", { class: "who", text: m.sender }), el("span", { class: "title", text: m.subject }),
     el("span", { class: "meta" }, m.embargo ? el("span", { class: "mail-embargo", text: "엠바고" }) : null, el("time", { class: "time", text: fmtTime(m.sent_at || m.first_seen_at) }))))
     : [el("div", { class: "empty" }, el("strong", { text: "수집된 메일이 없습니다" }), el("span", { text: "설정에서 메일을 연결하세요." }))]));
 }
@@ -713,7 +870,7 @@ async function renderSettings() {
   const me = (state.me = await api("/api/me"));
   const kindName = { all: "보건의료 전체", watch: "감시 기업 전체", company: "기업", keyword: "키워드" };
   $("#subs").replaceChildren(...(me.subscriptions.length ? me.subscriptions.map((s) =>
-    el("span", { class: "tag" }, `${kindName[s.kind]}${s.value ? ": " + s.value : ""}`,
+    el("span", { class: "tag" }, `${kindName[s.kind]}${s.value ? ": " + s.value : ""}${s.kind === "company" && s.levels === "all" ? " (모든 공시)" : ""}`,
       el("button", { type: "button", "aria-label": `${s.value || kindName[s.kind]} 삭제`, text: "×", onclick: async () => {
         await api(`/api/subscriptions?kind=${s.kind}&value=${encodeURIComponent(s.value)}`, { method: "DELETE" }); renderSettings(); loadCounts();
       } }))) : [el("span", { class: "muted small", text: "지정된 항목이 없습니다." })]));
@@ -734,10 +891,13 @@ async function renderSettings() {
 $("#sub-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const f = new FormData(e.target);
-  try { await api("/api/subscriptions", { method: "POST", body: { kind: f.get("kind"), value: f.get("value") || "" } }); e.target.reset(); renderSettings(); loadCounts(); }
+  try { await api("/api/subscriptions", { method: "POST", body: { kind: f.get("kind"), value: f.get("value") || "", levels: f.get("kind") === "company" ? f.get("levels") : "red" } }); e.target.reset(); renderSettings(); loadCounts(); }
   catch (err) { toast(err.message); }
 });
-$("#sub-form select").addEventListener("change", (e) => { $("#sub-form input").hidden = ["all", "watch"].includes(e.target.value); });
+$("#sub-form select[name=kind]").addEventListener("change", (e) => {
+  $("#sub-form input").hidden = ["all", "watch"].includes(e.target.value);
+  $("#sub-form select[name=levels]").hidden = e.target.value !== "company";
+});
 $("#reporter-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   try { await api("/api/me/reporter", { method: "POST", body: { reporter_id: e.target.reporter_id.value.trim() } }); toast("저장했습니다."); renderSettings(); }

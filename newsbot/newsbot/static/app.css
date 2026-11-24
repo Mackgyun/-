@@ -333,6 +333,17 @@ details.card summary { cursor: pointer; font-weight: 600; }
 .fin tr:last-child td { border-bottom: 0; }
 .up { color: var(--green); } .down { color: var(--red); }
 
+/* ---------- 기업 히스토리 ---------- */
+.company-search .search input { width: 220px; }
+.cands { max-width: 520px; border: 1px solid var(--line-strong); border-radius: var(--r); background: var(--surface); padding: var(--s1); }
+.cands li[aria-selected="true"] button { background: var(--surface-2); }
+.company-head { display: flex; justify-content: space-between; align-items: flex-start; gap: var(--s4); flex-wrap: wrap; }
+.item.hist { grid-template-columns: 2.4em 3.6em minmax(0, 1fr) auto; cursor: default; }
+.item.hist .title { color: var(--text); text-decoration: none; }
+.item.hist .title:hover { text-decoration: underline; text-underline-offset: 3px; }
+.article-row { display: flex; gap: var(--s3); align-items: baseline; padding: 4px 0; flex-wrap: wrap; }
+.article-row time { font-size: .8rem; flex: none; }
+
 /* ---------- 메일 ---------- */
 .mail-embargo { color: var(--red); font-weight: 650; font-size: .8rem; }
 .pre { white-space: pre-wrap; font-size: .93rem; line-height: 1.7; max-height: 60vh; overflow: auto; }
@@ -391,6 +402,12 @@ details.card summary { cursor: pointer; font-weight: 600; }
   .item .title { grid-column: 2 / 4; grid-row: 2; }
   .item .meta { grid-column: 3; grid-row: 1; }
   .item .acts { display: none !important; }
+  .item.hist { grid-template-columns: 2.4em minmax(0, 1fr); }
+  .item.hist .who { grid-column: 2; grid-row: 1; }
+  .item.hist .title { grid-column: 1 / 3; grid-row: 2; white-space: normal; }
+  .item.hist .meta { grid-column: 2; grid-row: 1; justify-self: end; }
+  .company-search { flex-wrap: wrap; }
+  .company-search .search { flex: 1 1 100%; }
   .item:hover .claimed-by { display: inline-flex; }
   .kbd-hint { display: none; }
   .detail, .shell.has-detail .detail { position: fixed; inset: 0; width: auto; z-index: 30; height: auto; }

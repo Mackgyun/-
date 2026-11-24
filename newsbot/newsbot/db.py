@@ -41,6 +41,18 @@ CREATE TABLE IF NOT EXISTS subscriptions (
   value TEXT NOT NULL,
   PRIMARY KEY (user_id, kind, value)
 );
+-- 기업 히스토리용 DART 공시 이력 (회사별로 받아 6시간 보관)
+CREATE TABLE IF NOT EXISTS company_filings (
+  rcept_no TEXT PRIMARY KEY,
+  corp_code TEXT NOT NULL,
+  corp_name TEXT NOT NULL,
+  report_nm TEXT NOT NULL,
+  rcept_dt TEXT NOT NULL,
+  flr_nm TEXT,
+  rm TEXT,
+  fetched_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_cf_corp ON company_filings(corp_code, rcept_dt DESC);
 CREATE TABLE IF NOT EXISTS companies (
   corp_code TEXT PRIMARY KEY,
   corp_name TEXT NOT NULL,
@@ -210,6 +222,8 @@ MIGRATIONS = [
     ("users", "monthly_limit_krw", "INTEGER"),
     # 알림 발송 여부 (아웃박스). 기존 공시는 이미 처리된 것으로 본다.
     ("disclosures", "alerted_at", "TEXT"),
+    # 기업 구독의 알림 범위: red = 중요 공시만, all = 정정공시를 뺀 모든 공시
+    ("subscriptions", "levels", "TEXT NOT NULL DEFAULT 'red'"),
 ]
 BACKFILL = {
     ("disclosures", "alerted_at"): "UPDATE disclosures SET alerted_at='migrated' WHERE alerted_at IS NULL",

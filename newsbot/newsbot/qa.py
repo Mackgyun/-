@@ -9,6 +9,7 @@ import asyncio
 import json
 from datetime import timedelta
 
+from . import company
 from .alio import finance_overview
 from .articles import search_articles
 from .config import Settings
@@ -39,7 +40,7 @@ def _disc_out(r: dict) -> dict:
 
 
 def build_tools(settings: Settings, db: Database, user: dict, dart: DartClient | None,
-                loop: asyncio.AbstractEventLoop | None) -> list[Tool]:
+                loop: asyncio.AbstractEventLoop | None, rules=None) -> list[Tool]:
     def run(coro):
         if loop is None:
             return asyncio.run(coro)
@@ -107,6 +108,19 @@ def build_tools(settings: Settings, db: Database, user: dict, dart: DartClient |
         sql += " ORDER BY first_seen_at DESC LIMIT 10"
         return db.query(sql, tuple(params))
 
+    def company_history(a: dict):
+        if rules is None:
+            return {"error": "기업 히스토리를 쓸 수 없습니다"}
+        h = run(company.history(db, rules, dart if settings.dart_api_key else None, settings.data_dir,
+                                a.get("company", ""), years=int(a.get("years") or 3)))
+        if not h.get("company"):
+            return {"error": h.get("notice")}
+        keep = [f for f in h["filings"] if f["level"] != "gray"][:80]
+        return {"company": h["company"]["corp_name"], "years": h["years"], "notice": h.get("notice"),
+                "filings": [{"date": f.get("rcept_dt"), "title": f["report_nm"], "level": f["level"],
+                             "id": f["rcept_no"], "url": f["url"]} for f in keep],
+                "newsroom_articles": h["articles"][:10], "financials": h.get("financials")}
+
     def search_newsroom_articles(a: dict):
         mine = bool(a.get("mine_only"))
         rid = (user.get("reporter_id") or "").lower() or None
@@ -128,6 +142,10 @@ def build_tools(settings: Settings, db: Database, user: dict, dart: DartClient |
                 "year": {"type": "integer", "description": "사업연도 (예: 2025)"}}, ["company"]), company_financials),
         Tool("alio_finance", "알리오에서 수집한 공공기관·국립대병원 결산(손익계산서) 전년 대비 비교를 가져온다.",
              S({"organization": {"type": "string", "description": "기관명 일부 (비우면 전체)"}}), alio_finance),
+        Tool("company_history", "한 회사의 최근 몇 년치 DART 공시 이력(이 앱 수집 이전 것 포함), 청년의사 과거 기사, "
+             "최근 3개년 매출액·영업이익·당기순이익을 한 번에 가져온다. 회사의 과거 행보·히스토리 질문에 먼저 쓴다.",
+             S({"company": {"type": "string", "description": "회사명 (예: 유한양행)"},
+                "years": {"type": "integer", "description": "최근 몇 년 (기본 3, 최대 10)"}}, ["company"]), company_history),
         Tool("search_newsroom_articles", "청년의사 과거 기사를 검색한다. mine_only=true면 질문한 기자 본인 기사만.",
              S({"query": {"type": "string"}, "mine_only": {"type": "boolean"}}, ["query"]), search_newsroom_articles),
     ]
@@ -138,14 +156,14 @@ def build_tools(settings: Settings, db: Database, user: dict, dart: DartClient |
 
 
 def ask(settings: Settings, db: Database, llm: LLM, user: dict, question: str, dart: DartClient | None,
-        loop: asyncio.AbstractEventLoop | None) -> dict:
+        loop: asyncio.AbstractEventLoop | None, rules=None) -> dict:
     """동기 함수 (스레드에서 실행)."""
     recent = db.query("SELECT question, answer FROM chats WHERE user_id=? ORDER BY id DESC LIMIT 3", (user["id"],))
     history: list[dict] = []
     for c in reversed(recent):
         history += [{"role": "user", "content": c["question"]}, {"role": "assistant", "content": c["answer"][:3000]}]
     history.append({"role": "user", "content": question})
-    tools = build_tools(settings, db, user, dart, loop)
+    tools = build_tools(settings, db, user, dart, loop, rules)
     system = SYSTEM.format(today=now().strftime("%Y년 %m월 %d일 %H:%M"))
     result = llm.agent(system, history, tools, tier="main", user_id=user["id"], purpose="question")
     db.execute("INSERT INTO chats(user_id, question, answer, trace_json, model, created_at) VALUES(?,?,?,?,?,?)",

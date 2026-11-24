@@ -59,6 +59,7 @@
         <a href="#ask" data-nav="ask" class="nav-item"><svg class="ni" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 3.5h11v7.5H7l-3 2.5V11H2.5z"/></svg>AI 질문</a>
         <a href="#draft" data-nav="draft" class="nav-item"><svg class="ni" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.5 2.5l3 3L6 13H3v-3z"/></svg>기사 초안</a>
         <p class="nav-label">자료</p>
+        <a href="#company" data-nav="company" class="nav-item"><svg class="ni" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 13.5V3.5h6v10"/><path d="M9 6.5h4v7"/><path d="M5 6h2M5 8.5h2M5 11h2M11 9h.01M11 11.5h.01"/><path d="M2 13.5h12"/></svg>기업 히스토리</a>
         <a href="#finance" data-nav="finance" class="nav-item"><svg class="ni" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 13.5h11M4.5 11V7.5M8 11V4.5M11.5 11V9"/></svg>공공기관 결산</a>
         <a href="#mail" data-nav="mail" class="nav-item"><svg class="ni" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3.5" width="12" height="9" rx="1.5"/><path d="m2.5 4.5 5.5 4 5.5-4"/></svg>보도자료 메일</a>
       </nav>
@@ -139,6 +140,23 @@
         <details class="card"><summary>감시 기관 목록</summary><p id="alio-orgs" class="small"></p><p id="alio-missing" class="error small"></p></details>
       </section>
 
+      <!-- 기업 히스토리 -->
+      <section id="view-company" class="view" hidden>
+        <header class="pane-head">
+          <div class="pane-title"><h1>기업 히스토리</h1></div>
+          <form id="company-form" class="pane-tools company-search" role="search" autocomplete="off">
+            <label class="search"><span class="sr-only">회사명</span>
+              <input id="company-q" name="q" placeholder="회사명 (예: 유한양행)" aria-autocomplete="list" aria-controls="company-cands"></label>
+            <select id="company-years" aria-label="기간"><option value="1">최근 1년</option><option value="3" selected>최근 3년</option><option value="5">최근 5년</option><option value="10">최근 10년</option></select>
+            <button class="btn primary" type="submit">찾기</button>
+          </form>
+        </header>
+        <ul id="company-cands" class="plain-list cands" role="listbox" aria-label="회사 후보" hidden></ul>
+        <div id="company-body" class="stack">
+          <div class="empty"><strong>회사명을 입력하세요</strong><span>DART 공시 이력, 청년의사 과거 기사, 최근 3개년 실적을 한 화면에 모아 보여 줍니다.</span></div>
+        </div>
+      </section>
+
       <!-- 메일 -->
       <section id="view-mail" class="view" hidden>
         <header class="pane-head"><div class="pane-title"><h1>보도자료 메일</h1></div></header>
@@ -155,7 +173,7 @@
         <div class="settings">
           <section class="card stack">
             <h2 class="h3">알림 대상</h2>
-            <p class="muted small">아래 조건에 맞는 중요 공시만 알림으로 받습니다. 내 출입처 목록도 같은 조건을 씁니다.</p>
+            <p class="muted small">아래 조건에 맞는 중요 공시를 알림으로 받습니다. 기업은 '모든 공시'를 고르면 일반 공시도 받습니다. 구독한 기업은 보건의료 업종이 아니어도 수집합니다. 내 출입처 목록도 같은 조건을 씁니다.</p>
             <div id="subs" class="tags"></div>
             <form id="sub-form" class="row">
               <select name="kind" aria-label="종류">
@@ -163,6 +181,7 @@
                 <option value="watch">감시 기업 전체</option><option value="all">보건의료 전체</option>
               </select>
               <input name="value" placeholder="예: 유한양행, 기술이전" aria-label="기업명 또는 키워드">
+              <select name="levels" aria-label="알림 범위"><option value="red">중요 공시만</option><option value="all">모든 공시</option></select>
               <button class="btn" type="submit">추가</button>
             </form>
           </section>

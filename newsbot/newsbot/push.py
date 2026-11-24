@@ -132,9 +132,17 @@ def recipients(db: Database, rules: Rules, row: dict) -> list[int]:
     return sorted(users)
 
 
+def all_level_recipients(db: Database, row: dict) -> list[int]:
+    """'모든 공시'로 이 회사를 구독한 사용자 (중요가 아닌 공시용)."""
+    rows = db.query("""SELECT DISTINCT s.user_id FROM subscriptions s JOIN users u ON u.id=s.user_id
+                       WHERE u.active=1 AND s.kind='company' AND s.levels='all' AND REPLACE(s.value,' ','')=?""",
+                    ("".join(row["corp_name"].split()),))
+    return sorted(r["user_id"] for r in rows)
+
+
 def payload_for(row: dict, public_url: str) -> dict:
     return {
-        "title": f"{row['corp_name']} · 중요 공시",
+        "title": f"{row['corp_name']} · {'중요 공시' if row.get('level') == 'red' else '공시'}",
         "body": row["report_nm"],
         "url": f"{public_url}/#d/{row['rcept_no']}",
         "tag": row["rcept_no"],
@@ -161,19 +169,21 @@ class Alerter:
             pending = self.db.query("SELECT * FROM disclosures WHERE alerted_at IS NULL ORDER BY first_seen_at")
             if not pending:
                 return 0
-            targets = [r for r in pending if r["level"] == "red" and not r["is_correction"]]
-            quiet = [r["rcept_no"] for r in pending if r not in targets]
+            targets = [r for r in pending if not r["is_correction"]]
+            quiet = [r["rcept_no"] for r in pending if r["is_correction"]]
             self.mark_quiet(quiet, "skip")
             if not self.notify:
                 self.mark_quiet([r["rcept_no"] for r in targets], "log")
                 return 0
             per_user: dict[int, list[dict]] = {}
             for row in targets:
-                for uid in recipients(self.db, self.rules, row):
+                # 중요 공시는 구독 조건 전체, 그 밖의 공시는 '모든 공시'로 기업을 구독한 사람에게만
+                uids = recipients(self.db, self.rules, row) if row["level"] == "red" else all_level_recipients(self.db, row)
+                for uid in uids:
                     per_user.setdefault(uid, []).append(row)
             for uid, rows in per_user.items():
                 if len(rows) > SUMMARY_OVER:
-                    payload = {"title": f"중요 공시 {len(rows)}건", "body": " / ".join(r["corp_name"] for r in rows[:6]),
+                    payload = {"title": f"공시 {len(rows)}건", "body": " / ".join(r["corp_name"] for r in rows[:6]),
                                "url": f"{self.public_url}/#s/red", "tag": "batch"}
                     sent = await asyncio.to_thread(self.pusher.send_to_user, uid, payload)
                     self.db.log("alert", f"batch {len(rows)} -> user {uid} ({sent} devices)")
