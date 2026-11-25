@@ -11,9 +11,21 @@ const SPLITS = {
   beat: { title: "내 출입처", empty: ["해당 공시가 없습니다", "출입처 기업과 키워드는 설정에서 지정합니다."], key: "3" },
   unclaimed: { title: "담당 미지정", empty: ["담당 미지정 중요 공시가 없습니다", "최근 3일 기준입니다."], key: "4" },
   alio: { title: "알리오", empty: ["알리오 공시가 없습니다", "공공기관 공시는 6시간마다 수집합니다."], key: "5" },
-  all: { title: "전체", empty: ["수집된 공시가 없습니다", "DART 인증키를 등록하면 수집을 시작합니다."], key: "6" },
+  mfds: { title: "식약처", empty: ["식약처 소식이 없습니다", "회수·안전성서한·행정처분·공급중단·임상 승인을 30분마다 수집합니다."], key: "6" },
+  assembly: { title: "국회", empty: ["국회 소식이 없습니다", "보건복지위 법안 발의·본회의 처리·보건의료 토론회를 30분마다 수집합니다."], key: "7" },
+  all: { title: "전체", empty: ["수집된 공시가 없습니다", "DART 인증키를 등록하면 수집을 시작합니다."], key: "8" },
   mine: { title: "내 담당", empty: ["담당 공시가 없습니다", "공시를 선택한 뒤 C 키로 담당을 지정합니다."], key: "" },
 };
+
+// 출처별 표기 (DART가 아닌 것은 회사 히스토리·실적 비교를 숨긴다)
+const SOURCE = {
+  dart: { name: "DART", origin: "DART 원문" },
+  alio: { name: "알리오", origin: "알리오 원문", tag: "알리오" },
+  mfds: { name: "식약처", origin: "식약처 원문", tag: "식약처" },
+  assembly: { name: "국회", origin: "국회 원문", tag: "국회" },
+};
+const src = (d) => SOURCE[d.source] || SOURCE.dart;
+const isDart = (d) => !d.source || d.source === "dart";
 
 const state = {
   me: null, view: "list", split: "inbox", q: "", items: [], selected: -1, detail: null,
@@ -212,7 +224,7 @@ async function renderToday() {
   st.classList.toggle("ok", ok);
   st.classList.toggle("bad", !ok && s.dart_status !== "대기 중");
   $(".status-text", st).textContent = ok ? `DART 정상 · ${fmtTime(s.last_poll_at)} 수집` : s.dart_status;
-  st.title = `DART: ${s.dart_status} / 알리오: ${s.alio_status}`;
+  st.title = `DART: ${s.dart_status} / 알리오: ${s.alio_status} / 식약처·국회: ${s.gov_status || "-"}`;
 }
 
 // ---------- 목록 ----------
@@ -277,7 +289,7 @@ function rowFor(it, idx, fresh) {
     el("span", { class: "title", text: it.report_nm, title: it.report_nm }),
     el("span", { class: "meta" },
       it.is_correction ? el("span", { class: "tag-s fix", text: "정정" }) : null,
-      it.source === "alio" ? el("span", { class: "tag-s alio", text: "알리오" }) : null,
+      SOURCE[it.source]?.tag ? el("span", { class: `tag-s ${it.source}`, text: SOURCE[it.source].tag }) : null,
       it.claimed_name ? el("span", { class: "claimed-by", title: `담당: ${it.claimed_name}` },
         el("span", { class: "avatar", text: initials(it.claimed_name) }), it.written_at ? "기사화" : "") : null,
       el("span", { class: "acts" },
@@ -346,7 +358,7 @@ async function markDone(it) {
   if (!it || it.done_at) return;
   const idx = state.items.findIndex((x) => x.rcept_no === it.rcept_no);
   $(`.item[data-id="${CSS.escape(it.rcept_no)}"]`)?.classList.add("leaving");
-  const removeFromList = !["all", "mine", "alio"].includes(state.split);
+  const removeFromList = !["all", "mine", "alio", "mfds", "assembly"].includes(state.split);
   setTimeout(() => {
     if (removeFromList && idx >= 0) {
       state.items.splice(idx, 1);
@@ -399,7 +411,7 @@ async function openDetail(id, quiet) {
       text, key ? el("span", { class: "k", "aria-hidden": "true", text: ` ${key}` }) : null);
   };
   const ask = (q) => { location.hash = "#ask"; setTimeout(() => sendQuestion(q), 50); };
-  const meta = [d.source === "alio" ? "알리오" : "DART", d.is_correction ? "정정공시" : null,
+  const meta = [src(d).name, d.is_correction ? "정정공시" : null,
     d.watched && d.source !== "alio" ? "감시 기업" : null].filter(Boolean).join(" · ");
   const panel = $("#detail");
   panel.replaceChildren(
@@ -415,13 +427,13 @@ async function openDetail(id, quiet) {
         el("h2", { class: "d-title", text: d.report_nm }),
         el("p", { class: "d-corp" }, el("strong", { text: d.corp_name }), el("span", { class: `lv ${d.level}`, text: lv.label }), el("span", { class: "muted", text: meta }))),
       el("p", { class: "row", style: "margin:0;gap:16px" },
-        el("a", { class: "source", href: d.url, target: "_blank", rel: "noopener noreferrer" }, d.source === "alio" ? "알리오 원문" : "DART 원문"),
-        d.source !== "alio" ? el("a", { class: "source", href: `#company/c/${d.corp_code}/${encodeURIComponent(d.corp_name)}` }, "이 회사 히스토리") : null),
+        el("a", { class: "source", href: d.url, target: "_blank", rel: "noopener noreferrer" }, src(d).origin),
+        isDart(d) ? el("a", { class: "source", href: `#company/c/${d.corp_code}/${encodeURIComponent(d.corp_name)}` }, "이 회사 히스토리") : null),
       el("dl", { class: "props" },
-        el("dt", { text: "접수일" }), el("dd", { text: fmtDate(d.rcept_dt) }),
-        el("dt", { text: "제출인" }), el("dd", { text: d.flr_nm || "-" }),
-        el("dt", { text: "분류 근거" }), el("dd", { text: d.keyword ? `제목 키워드 ${d.keyword}` : "해당 키워드 없음" }),
-        d.rm ? el("dt", { text: "비고" }) : null, d.rm ? el("dd", { text: d.rm }) : null,
+        el("dt", { text: isDart(d) || d.source === "alio" ? "접수일" : "날짜" }), el("dd", { text: fmtDate(d.rcept_dt) }),
+        el("dt", { text: isDart(d) || d.source === "alio" ? "제출인" : "출처" }), el("dd", { text: d.flr_nm || "-" }),
+        el("dt", { text: "분류 근거" }), el("dd", { text: d.keyword ? (isDart(d) ? `제목 키워드 ${d.keyword}` : `${src(d).name} · ${d.keyword}`) : "해당 키워드 없음" }),
+        d.rm ? el("dt", { text: isDart(d) ? "비고" : "내용" }) : null, d.rm ? el("dd", { class: "pre-line", text: d.rm }) : null,
         el("dt", { text: "접수번호" }), el("dd", { class: "mono", text: d.rcept_no }),
         el("dt", { text: "수집" }), el("dd", { text: fmtTime(d.first_seen_at) }),
         el("dt", { text: "담당" }), el("dd", { text: d.claimed_name ? `${d.claimed_name} (${fmtTime(d.claimed_at)})` : "미지정" }),
@@ -431,9 +443,9 @@ async function openDetail(id, quiet) {
       state.me.llm_ready ? el("section", {}, el("h3", { class: "section-label", text: "AI 질문" }),
         el("ul", { class: "text-list" },
           el("li", {}, el("button", { class: "text-btn", type: "button", text: "핵심 요약", onclick: () => ask(`${d.corp_name} ${d.report_nm}(접수번호 ${d.rcept_no}) 핵심 요약`) })),
-          d.source !== "alio" ? el("li", {}, el("button", { class: "text-btn", type: "button", text: "전년 실적 비교", onclick: () => ask(`${d.corp_name} 최근 사업연도 매출액·영업이익·당기순이익 전년 대비`) })) : null,
+          isDart(d) ? el("li", {}, el("button", { class: "text-btn", type: "button", text: "전년 실적 비교", onclick: () => ask(`${d.corp_name} 최근 사업연도 매출액·영업이익·당기순이익 전년 대비`) })) : null,
           el("li", {}, el("button", { class: "text-btn", type: "button", text: "최근 30일 공시", onclick: () => ask(`${d.corp_name} 최근 30일 공시 시간순 정리`) })))) : null,
-      d.source !== "alio" ? el("p", { class: "muted small", text: "DART 공개는 제출 후 약 15분 늦습니다." }) : null),
+      isDart(d) ? el("p", { class: "muted small", text: "DART 공개는 제출 후 약 15분 늦습니다." }) : null),
   );
   panel.hidden = false;
   $("#app").classList.add("has-detail");
@@ -478,7 +490,7 @@ function commands(query) {
     it ? { grp: "선택한 공시", label: `확인 처리 · ${it.corp_name}`, key: "E", run: () => markDone(it) } : null,
     it ? { grp: "선택한 공시", label: `${it.claimed_by === state.me.id ? "담당 해제" : "담당 지정"} · ${it.corp_name}`, key: "C", run: () => toggleClaim(it) } : null,
     it ? { grp: "선택한 공시", label: "원문 보기", key: "O", run: () => window.open(it.url, "_blank", "noopener") } : null,
-    it && it.source !== "alio" ? { grp: "선택한 공시", label: `기업 히스토리 · ${it.corp_name}`, run: go(`#company/c/${it.corp_code}/${encodeURIComponent(it.corp_name)}`) } : null,
+    it && isDart(it) ? { grp: "선택한 공시", label: `기업 히스토리 · ${it.corp_name}`, run: go(`#company/c/${it.corp_code}/${encodeURIComponent(it.corp_name)}`) } : null,
     it && state.me.llm_ready ? { grp: "선택한 공시", label: "초안 작성", key: "D", run: go(`#draft/d/${encodeURIComponent(it.rcept_no)}`) } : null,
     { grp: "작업", label: "현재 목록 전체 확인 처리", run: () => $("#done-all").click() },
     { grp: "작업", label: "이 기기 알림 설정", run: () => enablePush().catch((e) => toast(e.message)) },
@@ -875,7 +887,7 @@ async function renderSettings() {
       el("button", { type: "button", "aria-label": `${s.value || kindName[s.kind]} 삭제`, text: "×", onclick: async () => {
         await api(`/api/subscriptions?kind=${s.kind}&value=${encodeURIComponent(s.value)}`, { method: "DELETE" }); renderSettings(); loadCounts();
       } }))) : [el("span", { class: "muted small", text: "지정된 항목이 없습니다." })]));
-  $("#push-state").textContent = `알림 수신 기기 ${me.push_devices}대 · 서버 ${me.alert_mode === "notify" ? "알림 발송 중" : "기록 모드(알림 미발송)"}`;
+  $("#push-state").textContent = `알림 수신: 브라우저 ${me.push_devices}대 · PC 프로그램 ${(me.pc_devices || []).length}대 · 서버 ${me.alert_mode === "notify" ? "알림 발송 중" : "기록 모드(알림 미발송)"}`;
   $("#font-size").value = parseInt(getComputedStyle(document.documentElement).getPropertyValue("--fs")) || 14;
   $("#theme-select").value = store.get("nb-theme", "auto");
   $("#density-select").value = store.get("nb-density", "comfy");
@@ -886,9 +898,18 @@ async function renderSettings() {
   $("#mail-settings").hidden = !me.mail_enabled;
   const acc = me.mail_account;
   $("#mail-account-state").textContent = acc ? `연결: ${acc.username} · ${acc.folder}${acc.last_error ? " · 오류: " + acc.last_error : ""}` : "연결된 메일 계정이 없습니다.";
+  renderPcDevices(me.pc_devices || []);
   renderMcp();
   $("#usage").textContent = me.llm_ready ? `이번 달 AI 사용 ${me.spent_krw.toLocaleString("ko-KR")}원 / 한도 ${me.limit_krw.toLocaleString("ko-KR")}원` : "AI 인증키가 등록되지 않았습니다.";
   pollArticles();
+}
+function renderPcDevices(list) {
+  $("#pc-devices").replaceChildren(...(list.length ? list.map((d) =>
+    el("div", { class: "row" },
+      el("span", { class: "small", text: `${d.name} · ${fmtTime(d.created_at)} 등록${d.last_seen_at ? " · 마지막 연결 " + fmtTime(d.last_seen_at) : ""}` }),
+      el("button", { type: "button", class: "btn sm", text: "연결 해제", onclick: async () => {
+        await api(`/api/devices/${d.id}`, { method: "DELETE" }); toast("연결을 해제했습니다."); renderSettings();
+      } }))) : [el("span", { class: "muted small", text: "연결된 PC 프로그램이 없습니다." })]));
 }
 async function renderMcp() {
   let m;
@@ -1025,6 +1046,8 @@ async function renderAdmin() {
     el("dt", { text: "마지막 수집" }), el("dd", { text: st.last_poll_at ? fmtTime(st.last_poll_at) : "-" }),
     el("dt", { text: "알림 모드" }), el("dd", { text: st.alert_mode === "notify" ? "알림 발송" : "기록 모드 (.env에서 ALERT_MODE=notify로 전환)" }),
     el("dt", { text: "알리오" }), el("dd", { text: st.alio_status }),
+    el("dt", { text: "식약처·국회" }), el("dd", { text: `${st.gov_status}${st.gov_last_poll_at ? " · 마지막 수집 " + fmtTime(st.gov_last_poll_at) : ""}` }),
+    ...Object.entries(st.gov_feeds || {}).flatMap(([k, v]) => [el("dt", { class: "sub", text: k }), el("dd", { class: "small", text: v })]),
     el("dt", { text: "AI" }), el("dd", { text: st.llm }), el("dt", { text: "메일" }), el("dd", { text: st.mail }));
   $("#users").replaceChildren(...us.users.map((u) => el("tr", {},
     el("td", { text: u.display_name }), el("td", { text: u.username }), el("td", { text: u.role === "admin" ? "관리자" : "기자" }),

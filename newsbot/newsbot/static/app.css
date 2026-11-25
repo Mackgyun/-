@@ -244,6 +244,10 @@ label.inline { flex-direction: row; align-items: center; gap: var(--s2); font-we
 .icon-btn:hover { background: var(--surface-3); color: var(--text); }
 .tag-s { font-size: .72rem; font-weight: 650; padding: 1px 6px; border-radius: 4px; background: var(--surface-3); color: var(--text-2); }
 .tag-s.alio { background: var(--accent-soft); color: var(--accent); }
+.tag-s.mfds { background: var(--green-soft, var(--surface-3)); color: var(--green, var(--text-2)); }
+.tag-s.assembly { background: var(--violet-soft, var(--surface-3)); color: var(--violet, var(--text-2)); }
+.pre-line { white-space: pre-line; }
+.props dt.sub { padding-left: 12px; font-weight: 500; }
 .tag-s.fix { background: var(--amber-soft); color: var(--amber); }
 .claimed-by { display: inline-flex; align-items: center; gap: 4px; color: var(--green); font-weight: 600; }
 .claimed-by .avatar { width: 18px; height: 18px; font-size: .62rem; background: var(--green-soft); color: var(--green); }

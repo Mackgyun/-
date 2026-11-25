@@ -81,6 +81,11 @@ class Settings:
     mail_ai_summary: bool = False  # 메일 본문을 해외 AI API로 보내 요약 (국외 이전 검토 필요)
     mail_poll_minutes: int = 5
     docdoc_base: str = "https://www.docdocdoc.co.kr"
+    # 식약처(공공데이터포털)·국회(열린국회정보) 수집. 키가 있는 쪽만 돈다
+    data_go_kr_api_key: str = ""
+    assembly_api_key: str = ""
+    gov_enabled: bool = True
+    gov_poll_minutes: int = 30
     digest_times: tuple = ("08:00", "13:00", "18:00", "23:00")
 
     # 원격 MCP: 기자가 자기 Claude·ChatGPT에 이 앱을 커넥터로 연결 (기자 계정으로 OAuth 로그인)
@@ -153,6 +158,10 @@ def load_settings(env_file: Path | None = None) -> Settings:
         mail_ai_summary=_bool("MAIL_AI_SUMMARY", False),
         mail_poll_minutes=max(1, int(os.getenv("MAIL_POLL_MINUTES", "5"))),
         docdoc_base=os.getenv("DOCDOC_BASE", "https://www.docdocdoc.co.kr").rstrip("/"),
+        data_go_kr_api_key=os.getenv("DATA_GO_KR_API_KEY", "").strip(),
+        assembly_api_key=os.getenv("ASSEMBLY_API_KEY", "").strip(),
+        gov_enabled=_bool("GOV_ENABLED", True),
+        gov_poll_minutes=max(10, int(os.getenv("GOV_POLL_MINUTES", "30"))),
         digest_times=_times(os.getenv("DIGEST_TIMES", "08:00,13:00,18:00,23:00")),
         mcp_enabled=_bool("MCP_ENABLED", True),
         mcp_redirect_hosts=tuple(h.strip().lower() for h in os.getenv("MCP_REDIRECT_HOSTS", "").split(",") if h.strip())

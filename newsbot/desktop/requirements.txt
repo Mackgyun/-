@@ -1,0 +1,4 @@
+pystray==0.19.5
+pillow==13.0.0
+windows-toasts==1.4.0
+pyinstaller==6.22.3

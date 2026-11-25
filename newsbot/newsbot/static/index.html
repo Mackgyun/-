@@ -53,7 +53,9 @@
         <a href="#s/beat" data-nav="s/beat" class="nav-item"><svg class="ni" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="5.5"/><circle cx="8" cy="8" r="2"/></svg>내 출입처<span class="count" data-count="beat"></span><kbd class="nk">3</kbd></a>
         <a href="#s/unclaimed" data-nav="s/unclaimed" class="nav-item"><svg class="ni" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="5.5" r="2.5"/><path d="M3 13.5c.8-2.4 2.7-3.5 5-3.5s4.2 1.1 5 3.5"/></svg>담당 미지정<span class="count" data-count="unclaimed"></span><kbd class="nk">4</kbd></a>
         <a href="#s/alio" data-nav="s/alio" class="nav-item"><svg class="ni" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 14V4.5L8 2.5l5 2V14"/><path d="M6 6.5h1M9 6.5h1M6 9h1M9 9h1M7 14v-2.5h2V14"/></svg>알리오<span class="count" data-count="alio"></span><kbd class="nk">5</kbd></a>
-        <a href="#s/all" data-nav="s/all" class="nav-item"><svg class="ni" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5.5 4h8M5.5 8h8M5.5 12h8M2.5 4h.01M2.5 8h.01M2.5 12h.01"/></svg>전체<kbd class="nk">6</kbd></a>
+        <a href="#s/mfds" data-nav="s/mfds" class="nav-item"><svg class="ni" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="5.5" width="11" height="5" rx="2.5"/><path d="M8 5.5v5"/></svg>식약처<span class="count" data-count="mfds"></span><kbd class="nk">6</kbd></a>
+        <a href="#s/assembly" data-nav="s/assembly" class="nav-item"><svg class="ni" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 13.5h11M3.5 11.5h9M4.5 11.5v-4M8 11.5v-4M11.5 11.5v-4M2.5 7.5h11L8 3z"/></svg>국회<span class="count" data-count="assembly"></span><kbd class="nk">7</kbd></a>
+        <a href="#s/all" data-nav="s/all" class="nav-item"><svg class="ni" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5.5 4h8M5.5 8h8M5.5 12h8M2.5 4h.01M2.5 8h.01M2.5 12h.01"/></svg>전체<kbd class="nk">8</kbd></a>
         <p class="nav-label">내 작업</p>
         <a href="#s/mine" data-nav="s/mine" class="nav-item"><svg class="ni" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="5.5"/><path d="m5.6 8 1.7 1.7 3.1-3.3"/></svg>내 담당<span class="count" data-count="mine"></span></a>
         <a href="#ask" data-nav="ask" class="nav-item"><svg class="ni" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 3.5h11v7.5H7l-3 2.5V11H2.5z"/></svg>AI 질문</a>
@@ -191,6 +193,11 @@
             <div class="row"><button id="push-enable" class="btn primary" type="button">이 기기 알림 설정</button>
               <button id="push-test" class="btn" type="button">테스트 발송</button></div>
             <p class="muted small">아이폰은 Safari 공유 메뉴의 홈 화면에 추가로 설치한 앱에서만 설정할 수 있습니다.</p>
+          </section>
+          <section class="card stack">
+            <h2 class="h3">PC 알림 프로그램</h2>
+            <p class="muted small">브라우저를 닫아도 Windows 알림을 받는 프로그램입니다. 설치 후 브리핑 계정으로 한 번 로그인하면 PC를 켤 때 자동으로 실행됩니다.</p>
+            <div id="pc-devices" class="stack"></div>
           </section>
           <section class="card stack">
             <h2 class="h3">내 기사와 스타일북</h2>

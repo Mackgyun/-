@@ -18,6 +18,7 @@ from . import auth, company, mail, qa, writing
 from .alio import AlioClient, AlioCollector, AlioConfig, finance_overview, parse_tables
 from .articles import ArticleCollector
 from .config import KST, Settings
+from .govdata import GovClient, GovCollector
 from .dart import VIEW_URL, Collector, DartClient, DartLimitReached, redact
 from .db import Database, now, now_iso
 from .llm import LLM, LLMError
@@ -53,6 +54,12 @@ class CompanySummaryIn(BaseModel):
     name: str = Field(min_length=1, max_length=60)
     corp_code: str | None = Field(default=None, pattern=r"^\d{8}$")
     years: int = Field(default=3, ge=1, le=10)
+
+
+class DeviceLoginIn(BaseModel):
+    username: str
+    password: str
+    name: str = Field("PC", max_length=60)
 
 
 class PushIn(BaseModel):
@@ -185,6 +192,27 @@ async def alio_loop(settings: Settings, db: Database, alerter: Alerter, collecto
         await asyncio.sleep(settings.alio_poll_hours * 3600)
 
 
+async def gov_loop(settings: Settings, db: Database, alerter: Alerter, collector: GovCollector):
+    """식약처·국회 수집 (GOV_POLL_MINUTES 마다)."""
+    while True:
+        try:
+            new, status = await collector.poll()
+            bad = [k for k, v in status.items() if v.startswith("오류")]
+            db.set("gov_status", "정상" if not bad else f"일부 오류: {', '.join(bad)}")
+            db.set("gov_feeds", json.dumps(status, ensure_ascii=False))
+            db.set("gov_last_poll_at", now_iso())
+            db.log("gov", f"new={len(new)} " + " ".join(f"{k}={v}" for k, v in status.items())[:400])
+        except Exception as e:  # noqa: BLE001
+            db.set("gov_status", f"오류: {str(e)[:200]}")
+            db.log("error", f"gov: {e!r}")
+            log.exception("gov poll failed")
+        try:
+            await alerter.flush()
+        except Exception as e:  # noqa: BLE001
+            db.log("error", f"alert: {e!r}")
+        await asyncio.sleep(settings.gov_poll_minutes * 60)
+
+
 async def mail_loop(settings: Settings, db: Database, vault: mail.Vault, llm: LLM):
     summarize = None
     if settings.mail_ai_summary and llm.available:
@@ -255,6 +283,8 @@ def create_app(settings: Settings, db: Database | None = None, start_poller: boo
     alio_client = AlioClient(verify=settings.alio_verify_ssl)
     alio_collector = AlioCollector(alio_client, db, alio_cfg)
     articles = ArticleCollector(db, settings.docdoc_base)
+    gov_collector = GovCollector(GovClient(settings.data_go_kr_api_key, settings.assembly_api_key), db, rules)
+    gov_on = settings.gov_enabled and bool(settings.data_go_kr_api_key or settings.assembly_api_key)
     jobs: dict[str, asyncio.Task] = {}
     oauth = mcp = mcp_starlette = None
     if settings.mcp_enabled:
@@ -284,6 +314,8 @@ def create_app(settings: Settings, db: Database | None = None, start_poller: boo
             tasks.append(asyncio.create_task(backup_loop(settings, db)))
             if settings.alio_enabled:
                 tasks.append(asyncio.create_task(alio_loop(settings, db, alerter, alio_collector)))
+            if gov_on:
+                tasks.append(asyncio.create_task(gov_loop(settings, db, alerter, gov_collector)))
             if settings.mail_enabled:
                 tasks.append(asyncio.create_task(mail_loop(settings, db, vault, llm)))
         yield
@@ -294,6 +326,7 @@ def create_app(settings: Settings, db: Database | None = None, start_poller: boo
     app.state.db, app.state.settings, app.state.poller, app.state.pusher = db, settings, poller, pusher
     app.state.alerter = alerter
     app.state.llm, app.state.alio = llm, alio_collector
+    app.state.gov = gov_collector
 
     @app.middleware("http")
     async def security_headers(request: Request, call_next):
@@ -374,12 +407,13 @@ def create_app(settings: Settings, db: Database | None = None, start_poller: boo
         subs = db.query("SELECT kind, value, levels FROM subscriptions WHERE user_id=? ORDER BY kind, value",
                         (user["id"],))
         devices = db.one("SELECT COUNT(*) n FROM push_subs WHERE user_id=?", (user["id"],))["n"]
+        pc_devices = pusher.devices(user["id"])
         articles_n = db.one("SELECT COUNT(*) n FROM articles WHERE author_id=?",
                             ((user.get("reporter_id") or "").lower(),))["n"]
         sb = db.one("SELECT updated_at, source_count FROM stylebooks WHERE user_id=?", (user["id"],))
         acc = db.one("SELECT host, username, folder, enabled, last_error, updated_at FROM mail_accounts WHERE user_id=?",
                      (user["id"],))
-        return {**user, "subscriptions": subs, "push_devices": devices, "alert_mode": settings.alert_mode,
+        return {**user, "subscriptions": subs, "push_devices": devices, "pc_devices": pc_devices, "alert_mode": settings.alert_mode,
                 "llm_ready": llm.available, "llm_provider": settings.llm_provider,
                 "mail_enabled": settings.mail_enabled, "mail_account": acc,
                 "my_articles": articles_n, "stylebook": sb,
@@ -399,7 +433,7 @@ def create_app(settings: Settings, db: Database | None = None, start_poller: boo
     FEED_SELECT = """SELECT d.*, c.user_id AS claimed_by, u.display_name AS claimed_name, c.written_url, c.written_at
                      FROM disclosures d LEFT JOIN claims c ON c.rcept_no=d.rcept_no
                      LEFT JOIN users u ON u.id=c.user_id"""
-    SPLITS = ("inbox", "red", "beat", "alio", "unclaimed", "mine", "all")
+    SPLITS = ("inbox", "red", "beat", "alio", "mfds", "assembly", "unclaimed", "mine", "all")
 
     def _like(text: str) -> str:
         return "%" + text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
@@ -429,8 +463,8 @@ def create_app(settings: Settings, db: Database | None = None, start_poller: boo
         if split == "beat":
             cond, params = _beat_sql(user_id)
             return ["d.level!='gray'", "t.done_at IS NULL", cond], params
-        if split == "alio":
-            return ["d.source='alio'", "d.level!='gray'"], []
+        if split in ("alio", "mfds", "assembly"):
+            return ["d.source=?", "d.level!='gray'"], [split]
         if split == "unclaimed":
             return ["d.level='red'", "d.is_correction=0", "c.user_id IS NULL", "d.first_seen_at >= ?"], [recent]
         if split == "mine":
@@ -456,7 +490,7 @@ def create_app(settings: Settings, db: Database | None = None, start_poller: boo
             params.append(level)
         elif not include_gray and split not in ("all", "mine"):
             where.append("d.level!='gray'")
-        if source in ("dart", "alio"):
+        if source in ("dart", "alio", "mfds", "assembly"):
             where.append("d.source=?")
             params.append(source)
         if q:
@@ -534,6 +568,7 @@ def create_app(settings: Settings, db: Database | None = None, start_poller: boo
             "mails_today": mails_today, "briefing": brief,
             "last_poll_at": db.get("last_poll_at"), "dart_status": redact(db.get("dart_status", "대기 중")),
             "alio_status": db.get("alio_status", "대기 중") if settings.alio_enabled else "꺼짐",
+            "gov_status": (db.get("gov_status", "대기 중") if gov_on else "꺼짐 (키 없음)"),
             "alert_mode": settings.alert_mode,
         }
 
@@ -603,6 +638,8 @@ def create_app(settings: Settings, db: Database | None = None, start_poller: boo
                 elif d.get("source") == "alio" and d.get("link") and "disclosureNo=" in d["link"]:
                     html = await alio_client.report_html(d["link"].split("disclosureNo=")[1])
                     doc = "\n".join(" | ".join(r) for t in parse_tables(html) for r in t)[:15000]
+                elif d.get("source") in ("mfds", "assembly"):
+                    doc = f"출처: {d.get('flr_nm')} · {d.get('keyword')}\n{d.get('rm') or ''}\n원문 주소: {d.get('link') or ''}"
             except Exception as e:  # noqa: BLE001
                 db.log("error", f"draft source {ref}: {e!r}")
             if not doc and not text:
@@ -818,6 +855,64 @@ def create_app(settings: Settings, db: Database | None = None, start_poller: boo
             raise HTTPException(400, str(e)) from e
         return {"ok": True}
 
+    # --- PC 알림 프로그램 (트레이 앱) ------------------------------------
+    def device_from(request: Request) -> dict:
+        h = request.headers.get("authorization", "")
+        user = pusher.device_user(h[7:].strip() if h.lower().startswith("bearer ") else None)
+        if not user:
+            raise HTTPException(401, "다시 로그인하세요.")
+        return user
+
+    @app.post("/api/device/login")
+    def device_login(body: DeviceLoginIn, request: Request):
+        key = f"{body.username.lower()}|{client_ip(request)}"
+        if limiter.locked(key):
+            raise HTTPException(429, "로그인 실패가 많아 10분 동안 잠겼습니다.")
+        user = auth.authenticate(db, body.username, body.password)
+        if not user:
+            limiter.fail(key)
+            db.log("login_fail", f"device:{body.username[:40]}")
+            raise HTTPException(401, "아이디 또는 비밀번호가 맞지 않습니다.")
+        limiter.reset(key)
+        token = pusher.add_device(user["id"], body.name)
+        db.log("device", f"login user {user['id']} ({body.name[:40]})")
+        return {"token": token, "display_name": user["display_name"], "last_id": pusher.last_alert_id(user["id"]),
+                "alert_mode": settings.alert_mode}
+
+    @app.get("/api/device/alerts")
+    async def device_alerts(request: Request, after: int = 0, wait: int = 25):
+        """새 알림이 생기거나 wait초가 지날 때까지 기다렸다가 돌려준다 (롱폴링)."""
+        user = device_from(request)
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + max(0, min(wait, 50))
+        while True:
+            items = pusher.device_alerts(user["id"], after)
+            if items or loop.time() >= deadline or await request.is_disconnected():
+                break
+            await asyncio.sleep(1.5)
+        return {"items": items, "last_id": items[-1]["id"] if items else after,
+                "display_name": user["display_name"], "alert_mode": settings.alert_mode}
+
+    @app.post("/api/device/test")
+    async def device_test(request: Request):
+        user = device_from(request)
+        payload = {"title": "청년의사 브리핑", "body": "테스트 알림입니다. 중요 공시는 이 형식으로 표시됩니다.",
+                   "url": settings.public_url + "/", "tag": "test"}
+        sent = await asyncio.to_thread(pusher.send_to_user, user["id"], payload, True)
+        return {"sent": sent}
+
+    @app.delete("/api/device")
+    def device_logout(request: Request):
+        user = device_from(request)
+        pusher.remove_device(user["id"], user["device_id"])
+        return {"ok": True}
+
+    @app.delete("/api/devices/{device_id}")
+    def remove_device(device_id: int, user: dict = Depends(current_user)):
+        if not pusher.remove_device(user["id"], device_id):
+            raise HTTPException(404, "없는 기기입니다.")
+        return {"ok": True}
+
     @app.post("/api/push/test")
     async def push_test(user: dict = Depends(current_user)):
         payload = {"title": "청년의사 브리핑", "body": "테스트 알림입니다. 중요 공시는 이 형식으로 표시됩니다.",
@@ -862,6 +957,9 @@ def create_app(settings: Settings, db: Database | None = None, start_poller: boo
             "dart_calls_today": poller.client.calls_today(),
             "alio_status": db.get("alio_status", "대기 중") if settings.alio_enabled else "꺼짐",
             "alio_last_poll_at": db.get("alio_last_poll_at"),
+            "gov_status": (db.get("gov_status", "대기 중") if gov_on else "꺼짐 (키 없음)"),
+            "gov_last_poll_at": db.get("gov_last_poll_at"),
+            "gov_feeds": json.loads(db.get("gov_feeds", "{}") or "{}"),
             "llm": f"{settings.llm_provider} (준비됨)" if llm.available else "키 없음",
             "mail": "켜짐" if settings.mail_enabled else "꺼짐 (법무 검토 후)",
             "alert_mode": settings.alert_mode,
@@ -917,6 +1015,10 @@ def create_app(settings: Settings, db: Database | None = None, start_poller: boo
             limit = settings.alio_poll_hours * 3600 * 2 + 600
             if (a is None and uptime > 1800) or (a is not None and a > limit):
                 problems.append("alio")
+        if gov_on and start_poller:
+            a = age("gov_last_poll_at")
+            if (a is None and uptime > 1800) or (a is not None and a > settings.gov_poll_minutes * 60 * 3 + 600):
+                problems.append("gov")
         if start_poller:
             a = age("digest_checked_at")
             if (a is None and uptime > 600) or (a is not None and a > 600):

@@ -241,6 +241,24 @@ CREATE TABLE IF NOT EXISTS oauth_tokens (
   last_used_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_oauth_tokens_user ON oauth_tokens(user_id);
+-- PC 알림 프로그램 (트레이 앱). 토큰은 해시만 저장한다.
+CREATE TABLE IF NOT EXISTS devices (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  token_hash TEXT NOT NULL UNIQUE,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  name TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  last_seen_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_devices_user ON devices(user_id);
+-- PC 알림 프로그램이 가져갈 알림 (기자별 우편함)
+CREATE TABLE IF NOT EXISTS device_alerts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  payload TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_device_alerts_user ON device_alerts(user_id, id);
 """
 
 # 기존 DB에 나중에 추가한 열 (없으면 ALTER TABLE)

@@ -5,8 +5,11 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import hashlib
 import json
 import logging
+import secrets
+from datetime import timedelta
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -14,7 +17,7 @@ from cryptography.hazmat.primitives import serialization
 from py_vapid import Vapid
 from pywebpush import WebPushException, webpush
 
-from .db import Database, now_iso
+from .db import Database, now, now_iso
 from .rules import Rules
 
 log = logging.getLogger(__name__)
@@ -24,6 +27,11 @@ PUSH_HOSTS = ("fcm.googleapis.com", "android.googleapis.com", "updates.push.serv
               "web.push.apple.com")
 PUSH_HOST_SUFFIXES = (".push.services.mozilla.com", ".notify.windows.com", ".push.apple.com")
 SUMMARY_OVER = 5  # 한 번에 이보다 많으면 기자별로 묶어 한 통만 보냄
+DEVICE_ALERT_DAYS = 7  # PC 프로그램이 꺼져 있던 동안의 알림을 이 기간까지 보관
+
+
+def _hash(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
 
 
 def _b64(value: str) -> bytes:
@@ -86,11 +94,53 @@ class Pusher:
     def unsubscribe(self, endpoint: str) -> None:
         self.db.execute("DELETE FROM push_subs WHERE endpoint=?", (endpoint,))
 
+    # --- PC 알림 프로그램 ------------------------------------------------
+    def add_device(self, user_id: int, name: str) -> str:
+        token = "nbd_" + secrets.token_urlsafe(32)
+        self.db.execute("INSERT INTO devices(token_hash, user_id, name, created_at) VALUES(?,?,?,?)",
+                        (_hash(token), user_id, name.strip()[:60] or "PC", now_iso()))
+        return token
+
+    def device_user(self, token: str | None) -> dict | None:
+        if not token:
+            return None
+        row = self.db.one("""SELECT d.id device_id, d.name, u.id, u.username, u.display_name FROM devices d
+                             JOIN users u ON u.id=d.user_id WHERE d.token_hash=? AND u.active=1""", (_hash(token),))
+        if row:
+            self.db.execute("UPDATE devices SET last_seen_at=? WHERE id=?", (now_iso(), row["device_id"]))
+        return row
+
+    def remove_device(self, user_id: int, device_id: int) -> int:
+        return self.db.execute("DELETE FROM devices WHERE id=? AND user_id=?", (device_id, user_id))
+
+    def devices(self, user_id: int) -> list[dict]:
+        return self.db.query("SELECT id, name, created_at, last_seen_at FROM devices WHERE user_id=? ORDER BY id",
+                             (user_id,))
+
+    def last_alert_id(self, user_id: int) -> int:
+        row = self.db.one("SELECT COALESCE(MAX(id), 0) m FROM device_alerts WHERE user_id=?", (user_id,))
+        return int(row["m"])
+
+    def device_alerts(self, user_id: int, after: int, limit: int = 50) -> list[dict]:
+        rows = self.db.query("SELECT id, payload, created_at FROM device_alerts WHERE user_id=? AND id>? "
+                             "ORDER BY id LIMIT ?", (user_id, after, limit))
+        return [{"id": r["id"], "created_at": r["created_at"], **json.loads(r["payload"])} for r in rows]
+
+    def _queue_for_devices(self, user_id: int, payload: dict) -> int:
+        n = self.db.one("SELECT COUNT(*) n FROM devices WHERE user_id=?", (user_id,))["n"]
+        if not n:
+            return 0
+        self.db.execute("INSERT INTO device_alerts(user_id, payload, created_at) VALUES(?,?,?)",
+                        (user_id, json.dumps(payload, ensure_ascii=False), now_iso()))
+        cutoff = (now() - timedelta(days=DEVICE_ALERT_DAYS)).isoformat(timespec="seconds")
+        self.db.execute("DELETE FROM device_alerts WHERE created_at < ?", (cutoff,))
+        return int(n)
+
     def send_to_user(self, user_id: int, payload: dict, force: bool = False) -> int:
-        """동기 함수. 이벤트 루프에서는 스레드로 돌린다. 보낸 기기 수를 돌려준다."""
+        """동기 함수. 이벤트 루프에서는 스레드로 돌린다. 보낸 기기 수(브라우저 + PC 프로그램)를 돌려준다."""
         if not (self.enabled or force):
             return 0
-        sent = 0
+        sent = self._queue_for_devices(user_id, payload)
         for s in self.db.query("SELECT * FROM push_subs WHERE user_id=?", (user_id,)):
             info = {"endpoint": s["endpoint"], "keys": {"p256dh": s["p256dh"], "auth": s["auth"]}}
             try:
