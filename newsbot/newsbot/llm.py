@@ -12,6 +12,7 @@ import json
 import threading
 from contextlib import contextmanager
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -145,6 +146,7 @@ class ClaudeBackend:
 
 
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
+BUSY_COOLDOWN_SEC = 300
 
 
 class OpenAIBackend:
@@ -152,12 +154,17 @@ class OpenAIBackend:
 
     name = "openai"
 
-    def __init__(self, api_key: str, client=None, base_url: str | None = None, name: str = "openai"):
+    def __init__(self, api_key: str, client=None, base_url: str | None = None, name: str = "openai",
+                 fallbacks: list[str] | None = None):
         self.name = name
+        # 붐빌 때(503·시간 초과) 바꿔 부를 모델. 폴백이 있으면 한 모델에 오래 매달리지 않는다.
+        self.fallbacks = list(fallbacks or [])
+        self._busy_until: dict[str, float] = {}  # 붐볐던 모델은 잠시 건너뛴다
         if client is None:
             import openai
 
-            client = openai.OpenAI(api_key=api_key, base_url=base_url, max_retries=3, timeout=180.0)
+            retries, timeout = (1, 60.0) if self.fallbacks else (3, 180.0)
+            client = openai.OpenAI(api_key=api_key, base_url=base_url, max_retries=retries, timeout=timeout)
         self.client = client
         # OpenAI 최신 모델은 max_completion_tokens, 호환 API는 max_tokens 를 받는다
         self.token_param = "max_completion_tokens" if name == "openai" else "max_tokens"
@@ -167,7 +174,23 @@ class OpenAIBackend:
         if tools:
             kwargs["tools"] = [{"type": "function", "function": {
                 "name": t.name, "description": t.description, "parameters": t.schema}} for t in tools]
-        resp = self.client.chat.completions.create(**kwargs)
+        order = [model] + [m for m in self.fallbacks if m != model]
+        now_t = time.monotonic()
+        rested = [m for m in order if self._busy_until.get(m, 0) <= now_t]
+        order = rested or order[-1:]
+        for i, m in enumerate(order):
+            kwargs["model"] = m
+            try:
+                resp = self.client.chat.completions.create(**kwargs)
+                break
+            except Exception as e:  # noqa: BLE001
+                if not _overloaded(e):
+                    raise
+                if self.fallbacks:
+                    self._busy_until[m] = time.monotonic() + BUSY_COOLDOWN_SEC
+                if i == len(order) - 1:
+                    raise
+                log.warning("%s 모델 %s 응답 없음(%s) → %s 로 바꿔 부름", self.name, m, type(e).__name__, order[i + 1])
         u = resp.usage
         return resp, Usage(getattr(u, "prompt_tokens", 0) or 0, getattr(u, "completion_tokens", 0) or 0)
 
@@ -200,6 +223,13 @@ class OpenAIBackend:
         return "답변을 만들지 못했습니다. 기업명이나 기간을 좁혀 다시 질문하세요.", trace, usages
 
 
+def _overloaded(e: Exception) -> bool:
+    """모델이 붐비거나 응답이 없는 경우(다른 모델로 바꿔 볼 만한 오류)."""
+    kind = type(e).__name__
+    return (getattr(e, "status_code", None) in (500, 502, 503, 504)
+            or kind in ("APITimeoutError", "APIConnectionError", "InternalServerError"))
+
+
 def _fail_message(e: Exception, provider: str) -> str:
     kind = type(e).__name__
     if "RateLimit" in kind:
@@ -210,6 +240,8 @@ def _fail_message(e: Exception, provider: str) -> str:
         return "이 PC의 Ollama가 실행 중이 아닙니다. Ollama를 켜고 모델을 받았는지 확인하세요."
     if "Authentication" in kind or "PermissionDenied" in kind:
         return "AI 인증키가 맞지 않습니다. .env 의 키를 확인하세요."
+    if _overloaded(e):
+        return "AI 모델이 지금 붐빕니다. 잠시 뒤 다시 시도하세요."
     return f"AI 호출에 실패했습니다 ({kind})."
 
 
@@ -234,7 +266,8 @@ class LLM:
             if p == "claude":
                 self._backend = ClaudeBackend(self.settings.anthropic_api_key)
             elif p == "gemini":
-                self._backend = OpenAIBackend(self.settings.gemini_api_key, base_url=GEMINI_URL, name="gemini")
+                self._backend = OpenAIBackend(self.settings.gemini_api_key, base_url=GEMINI_URL, name="gemini",
+                                              fallbacks=self.settings.gemini_fallback_models)
             elif p == "ollama":
                 self._backend = OpenAIBackend("ollama", base_url=self.settings.ollama_url, name="ollama")
             else:

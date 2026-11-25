@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
@@ -256,9 +256,27 @@ def create_app(settings: Settings, db: Database | None = None, start_poller: boo
     alio_collector = AlioCollector(alio_client, db, alio_cfg)
     articles = ArticleCollector(db, settings.docdoc_base)
     jobs: dict[str, asyncio.Task] = {}
+    oauth = mcp = mcp_starlette = None
+    if settings.mcp_enabled:
+        from . import mcp_server
+
+        oauth = mcp_server.OAuthProvider(db, settings.public_url, settings.mcp_redirect_hosts)
+        mcp = mcp_server.build_mcp(settings, db, rules, lambda: poller.client if settings.dart_api_key else None,
+                                   oauth)
+        mcp_starlette = mcp_server.mcp_app(mcp, settings)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        if mcp is not None:
+            async with mcp.session_manager.run():
+                async with _background(app):
+                    yield
+        else:
+            async with _background(app):
+                yield
+
+    @asynccontextmanager
+    async def _background(app: FastAPI):
         tasks = []
         if start_poller:
             tasks.append(asyncio.create_task(poller.run_forever()))
@@ -907,6 +925,50 @@ def create_app(settings: Settings, db: Database | None = None, start_poller: boo
                 "dart": "no_key" if not settings.dart_api_key else ("paused" if poller.paused() else "on")}
         return JSONResponse(body, status_code=503 if problems else 200)
 
+    # --- 원격 MCP 커넥터 --------------------------------------------------
+    if oauth is not None:
+        from .mcp_server import consent_page
+
+        @app.get("/oauth/consent")
+        def oauth_consent(request: Request, req: str = ""):
+            user = auth.session_user(db, request.cookies.get(COOKIE))
+            pending = oauth.pending(req)
+            return HTMLResponse(consent_page(pending, user), status_code=200 if pending else 410,
+                                headers={"Cache-Control": "no-store"})
+
+        @app.post("/oauth/consent")
+        async def oauth_consent_post(request: Request):
+            form = await request.form()
+            req_id, action = str(form.get("req", "")), str(form.get("action", ""))
+            pending = oauth.pending(req_id)
+            if not pending:
+                return HTMLResponse(consent_page(None, None), status_code=410)
+            if action == "deny":
+                return RedirectResponse(oauth.deny(req_id), status_code=302)
+            user = auth.session_user(db, request.cookies.get(COOKIE))
+            if not user:
+                username = str(form.get("username", ""))
+                key = f"{username.lower()}|{client_ip(request)}"
+                if limiter.locked(key):
+                    return HTMLResponse(consent_page(pending, None, "로그인 실패가 많아 10분 동안 잠겼습니다."), 429)
+                user = auth.authenticate(db, username, str(form.get("password", "")))
+                if not user:
+                    limiter.fail(key)
+                    db.log("login_fail", f"mcp {username[:40]}")
+                    return HTMLResponse(consent_page(pending, None, "아이디 또는 비밀번호가 맞지 않습니다."), 401)
+                limiter.reset(key)
+            return RedirectResponse(oauth.approve(req_id, user["id"]), status_code=302)
+
+        @app.get("/api/mcp")
+        def mcp_info(user: dict = Depends(current_user)):
+            return {"enabled": True, "url": settings.public_url + "/mcp",
+                    "https": settings.public_url.startswith("https://"),
+                    "connections": oauth.connections(user["id"])}
+
+        @app.delete("/api/mcp/connections")
+        def mcp_disconnect(user: dict = Depends(current_user)):
+            return {"removed": oauth.disconnect_all(user["id"])}
+
     # --- 정적 파일 -------------------------------------------------------
     @app.get("/sw.js")
     def sw():
@@ -922,6 +984,9 @@ def create_app(settings: Settings, db: Database | None = None, start_poller: boo
         return FileResponse(STATIC / "index.html", headers={"Cache-Control": "no-cache"})
 
     app.mount("/static", StaticFiles(directory=STATIC), name="static")
+    if mcp_starlette is not None:
+        # 맨 마지막에 붙여 위의 경로가 먼저 잡히게 한다: /mcp, /authorize, /token, /register, /revoke, /.well-known/*
+        app.mount("/", mcp_starlette, name="mcp")
     return app
 
 

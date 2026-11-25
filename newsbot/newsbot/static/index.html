@@ -206,6 +206,13 @@
             <textarea id="stylebook" rows="10" placeholder="스타일북 내용. 직접 작성할 수도 있습니다." aria-label="스타일북"></textarea>
             <div class="row"><button id="stylebook-save" class="btn" type="button">저장</button></div>
           </section>
+          <section id="mcp-settings" class="card stack" hidden>
+            <h2 class="h3">내 AI에 연결 (MCP 커넥터)</h2>
+            <p class="muted small">Claude나 ChatGPT의 커넥터 추가 화면에 아래 주소를 넣으면, 내 AI가 공시·기업 이력·과거 기사·내 스타일북을 직접 찾아 씁니다. 연결할 때 이 계정으로 로그인합니다. 자료는 읽기만 합니다.</p>
+            <div class="row"><input id="mcp-url" readonly aria-label="커넥터 주소"><button id="mcp-copy" class="btn" type="button">복사</button></div>
+            <p id="mcp-state" class="muted small"></p>
+            <div class="row"><button id="mcp-disconnect" class="btn" type="button">연결 모두 끊기</button></div>
+          </section>
           <section id="mail-settings" class="card stack">
             <h2 class="h3">보도자료 메일 연결</h2>
             <p id="mail-account-state" class="muted small"></p>

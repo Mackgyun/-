@@ -13,6 +13,7 @@ DART 공시와 알리오(공공기관·국립대병원) 공시를 24시간 모�
 | 기업 히스토리 | 회사명으로 찾으면 DART 과거 공시(최대 10년, 이 앱을 켜기 전 것 포함), 이 앱이 모은 공시와 담당·기사화 기록, 청년의사 과거 기사, 최근 3개년 매출·영업이익·순이익을 한 화면에. AI 타임라인 요약, AI 질문에서도 "○○ 최근 3년 행보" 같은 질문에 이 자료를 씀 | DART 키 (없으면 앱이 모은 공시만) |
 | 기업 공시 알림 | 설정이나 기업 히스토리 화면에서 회사를 구독하면 그 회사 공시를 알림으로 받음. '중요 공시만' 또는 '모든 공시' 선택. 구독한 회사는 보건의료 업종이 아니어도 수집 | - |
 | 분류·담당 | 미확인·중요·내 출입처·담당 미지정·알리오 목록, 키보드 분류(J/K·E·C·Z), 담당 지정으로 중복 취재 방지, 기사화 기록 | - |
+| AI 커넥터 (MCP) | 기자 본인의 Claude·ChatGPT에 이 앱을 붙여 공시·기업 이력·과거 기사·스타일북을 직접 꺼내 씀. 회사 AI 비용 없음 | https 주소 (아래 '기자 AI에 연결하기') |
 | 질문 | 공시·알리오 결산·DART 재무·과거 기사·(켜면) 내 메일을 AI가 찾아보고 출처와 함께 답 | AI 키 (시험은 무료 Gemini·Ollama) |
 | 기사 초안 | 공시 원문·보도자료·메모로 초안. 내 스타일북 + 비슷한 내 기사 참고. 원자료에 같은 숫자가 없으면 빨간색 표시(숫자 단위로 정확히 대조) | AI 키 |
 | 스타일북 | 내 기사(docdocdoc.co.kr)를 가져와 AI가 문체를 분석. 직접 고칠 수 있음 | AI 키 |
@@ -23,9 +24,9 @@ DART 공시와 알리오(공공기관·국립대병원) 공시를 24시간 모�
 ## 노트북(Windows)에 설치하기
 
 1. **Python 3.11 이상** 설치: https://www.python.org/downloads/ (설치 화면에서 'Add python.exe to PATH' 체크)
-2. 저장소를 받습니다. git이 없으면 GitHub 저장소 화면의 'Code → Download ZIP'으로 받아 압축을 풀어도 됩니다(브랜치 `claude/eloquent-fermi-pj12x0` 선택).
+2. 저장소를 받습니다. git이 없으면 GitHub 저장소 화면의 'Code → Download ZIP'으로 받아 압축을 풀어도 됩니다(브랜치 `chungnyun-newsbot` 선택).
    ```bash
-   git clone -b claude/eloquent-fermi-pj12x0 https://github.com/Mackgyun/-.git chungnyun-bot
+   git clone -b chungnyun-newsbot https://github.com/Mackgyun/-.git chungnyun-bot
    ```
 3. `chungnyun-bot\newsbot` 폴더에서 PowerShell을 열고 설치합니다.
    ```bash
@@ -80,6 +81,21 @@ DART 인증키도 무료입니다. [OpenDART](https://opendart.fss.or.kr)에서 
 - 인터넷에 열리는 만큼, 처음 2주는 사내에서만 쓰고 보안 점검 뒤 엽니다.
 - 외부 감시 서비스(UptimeRobot 등)에 `https://briefing.도메인/healthz`를 등록하면 DART·알리오 수집이나 정기 브리핑이 멈췄을 때 알려줍니다(503과 함께 멈춘 항목 표시).
 - 로그인 잠금은 터널이 알려 주는 실제 접속 IP 기준입니다(`CF-Connecting-IP`). 터널 없이 공유기 포트를 직접 여는 방식은 쓰지 마세요.
+
+## 기자 AI에 연결하기 (원격 MCP 커넥터)
+기자가 이미 쓰는 Claude나 ChatGPT에 이 앱을 '커넥터'로 붙이면, 그 AI가 공시·기업 이력·재무·알리오 결산·과거 기사·내 스타일북을 직접 찾아 씁니다. AI 비용은 기자 쪽 구독에서 나가므로 회사 API 키가 없어도 됩니다.
+
+- 주소: `PUBLIC_URL/mcp` (설정 화면 '내 AI에 연결'에 표시). **이 PC 밖에서 쓰려면 `PUBLIC_URL`이 https여야 합니다**(위 보안 터널).
+- 로그인: 커넥터를 추가하면 브라우저에 이 앱의 로그인·허용 화면이 뜹니다. 기자 본인 계정으로 로그인하고 '허용'을 누르면 끝입니다(OAuth 2.1, PKCE).
+- 도구(모두 읽기 전용): `today_overview`(오늘 공시·브리핑), `search_disclosures`, `get_disclosure`(DART 원문), `company_history`, `company_financials`, `alio_finance`, `search_newsroom_articles`, `writing_guide`(내 스타일북·작성 규칙·비슷한 내 기사), `check_draft_numbers`(초안 숫자 대조).
+- 연결하는 곳:
+  - **Claude** (웹·데스크톱): 설정 → 커넥터 → 맞춤 커넥터 추가 → 주소 입력. 팀·기업 요금제는 관리자가 조직에 먼저 추가할 수 있습니다.
+  - **ChatGPT**: 설정 → 앱·커넥터 → 고급 설정의 개발자 모드 → 커넥터 만들기 → 주소 입력(요금제에 따라 다름).
+  - **Claude Code**: `claude mcp add --transport http chungnyun https://briefing.도메인/mcp` 뒤 `/mcp`에서 로그인.
+- 돌아갈 주소(redirect)는 `MCP_REDIRECT_HOSTS`에 있는 곳만 허용합니다(기본: claude.ai, claude.com, chatgpt.com, chat.openai.com, localhost). 다른 AI 도구를 쓰려면 관리자가 호스트를 추가합니다.
+- 접근 토큰 1시간, 새로고침 토큰 30일(쓸 때마다 교체). 토큰은 해시로만 저장하고, 계정을 비활성화하면 바로 막힙니다. 기자는 설정 화면에서 '연결 모두 끊기'로 직접 끊을 수 있습니다.
+- 호출 기록은 이벤트 로그(`mcp`)에 남습니다. 앱 안의 AI 사용량·비용 집계에는 들어가지 않습니다(기자 쪽 AI가 쓰기 때문).
+- 끄려면 `.env`에 `MCP_ENABLED=false`.
 
 ## 명령
 | 명령 | 하는 일 |

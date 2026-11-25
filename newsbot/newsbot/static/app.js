@@ -195,13 +195,14 @@ async function renderToday() {
   const figs = [fig("미확인", c.inbox || 0, "#s/inbox"), fig("중요", c.red || 0, "#s/red"), fig("담당 미지정", c.unclaimed || 0, "#s/unclaimed"),
     fig("내 담당", c.mine || 0, "#s/mine"), fig("오늘 수집 중요", s.red || 0, "#s/all")];
   if (s.mails_today != null) figs.push(fig("오늘 메일", s.mails_today, "#mail"));
-  box.replaceChildren(
+  // replaceChildren는 null을 "null" 글자로 넣으므로 빈 값은 빼고 넘긴다
+  box.replaceChildren(...[
     story,
     el("p", { class: "figures" }, figs.flatMap((f, i) => (i ? [el("span", { class: "sep", "aria-hidden": "true", text: "·" }), f] : [f]))),
     s.briefing ? el("details", { class: "digest" },
       el("summary", { text: `정기 브리핑 ${s.briefing.slot.slice(11)}${s.briefing.model ? " (AI 요약)" : ""}` }),
       el("p", { text: s.briefing.content })) : null,
-  );
+  ].filter(Boolean));
   box.hidden = false;
   const banner = $("#mode-banner");
   banner.hidden = s.alert_mode !== "log";
@@ -885,9 +886,29 @@ async function renderSettings() {
   $("#mail-settings").hidden = !me.mail_enabled;
   const acc = me.mail_account;
   $("#mail-account-state").textContent = acc ? `연결: ${acc.username} · ${acc.folder}${acc.last_error ? " · 오류: " + acc.last_error : ""}` : "연결된 메일 계정이 없습니다.";
+  renderMcp();
   $("#usage").textContent = me.llm_ready ? `이번 달 AI 사용 ${me.spent_krw.toLocaleString("ko-KR")}원 / 한도 ${me.limit_krw.toLocaleString("ko-KR")}원` : "AI 인증키가 등록되지 않았습니다.";
   pollArticles();
 }
+async function renderMcp() {
+  let m;
+  try { m = await api("/api/mcp"); } catch { $("#mcp-settings").hidden = true; return; }  // MCP_ENABLED=false
+  $("#mcp-settings").hidden = false;
+  $("#mcp-url").value = m.url;
+  const list = m.connections.map((c) => `${c.client_name}(${fmtTime(c.connected_at)} 연결${c.last_used_at ? ", " + fmtTime(c.last_used_at) + " 사용" : ""})`);
+  $("#mcp-state").textContent = (m.https ? "" : "아직 https 주소가 없어 이 PC 밖에서는 연결할 수 없습니다. ")
+    + (list.length ? `연결된 앱: ${list.join(", ")}` : "연결된 앱이 없습니다.");
+  $("#mcp-disconnect").disabled = !list.length;
+}
+$("#mcp-copy").addEventListener("click", async () => {
+  try { await navigator.clipboard.writeText($("#mcp-url").value); toast("주소를 복사했습니다."); }
+  catch { $("#mcp-url").select(); toast("주소를 선택했습니다. Ctrl+C로 복사하세요."); }
+});
+$("#mcp-disconnect").addEventListener("click", async () => {
+  if (!confirm("연결된 AI 앱을 모두 끊을까요? 다시 쓰려면 앱에서 커넥터를 다시 연결해야 합니다.")) return;
+  try { await api("/api/mcp/connections", { method: "DELETE" }); toast("연결을 끊었습니다."); renderMcp(); }
+  catch (err) { toast(err.message); }
+});
 $("#sub-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const f = new FormData(e.target);

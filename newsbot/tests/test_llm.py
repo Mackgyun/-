@@ -86,3 +86,55 @@ def test_check_numbers():
     checks = check_numbers("매출 1,234억원, 15% 증가, 2026년", "매출액 1234억원 ... 2026년 실적")
     found = {c["number"]: c["found"] for c in checks}
     assert found == {"1,234": True, "15": False, "2026": True}
+
+
+def test_gemini_falls_back_when_model_busy():
+    """무료 등급 모델이 503을 돌려주면 다음 모델로 바꿔 부르고, 인증 오류는 그대로 올린다."""
+    class Busy(Exception):
+        status_code = 503
+
+    class Denied(Exception):
+        status_code = 403
+
+    tried = []
+
+    def create(**kw):
+        tried.append(kw["model"])
+        if kw["model"] == "busy-model":
+            raise Busy()
+        return NS(choices=[NS(message=NS(content="ok", tool_calls=None))],
+                  usage=NS(prompt_tokens=1, completion_tokens=1))
+
+    b = OpenAIBackend("k", client=NS(chat=NS(completions=NS(create=create))), name="gemini",
+                      fallbacks=["busy-model", "spare-model"])
+    text, _ = b.complete("busy-model", "s", "p", "main")
+    assert text == "ok" and tried == ["busy-model", "spare-model"]
+
+    def deny(**kw):
+        tried.append(kw["model"])
+        raise Denied()
+
+    tried.clear()
+    b = OpenAIBackend("k", client=NS(chat=NS(completions=NS(create=deny))), name="gemini", fallbacks=["spare-model"])
+    with pytest.raises(Denied):
+        b.complete("main-model", "s", "p", "main")
+    assert tried == ["main-model"]
+
+
+def test_busy_model_is_skipped_for_a_while():
+    tried = []
+
+    class Busy(Exception):
+        status_code = 503
+
+    def create(**kw):
+        tried.append(kw["model"])
+        if kw["model"] == "main":
+            raise Busy()
+        return NS(choices=[NS(message=NS(content="ok", tool_calls=None))],
+                  usage=NS(prompt_tokens=1, completion_tokens=1))
+
+    b = OpenAIBackend("k", client=NS(chat=NS(completions=NS(create=create))), name="gemini", fallbacks=["spare"])
+    b.complete("main", "s", "p", "main")
+    b.complete("main", "s", "p", "main")
+    assert tried == ["main", "spare", "spare"]  # 두 번째는 붐볐던 main 을 건너뜀

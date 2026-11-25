@@ -66,6 +66,8 @@ class Settings:
     # Google AI Studio 무료 등급 (2026-11 요금표 기준 무료 모델)
     gemini_models: dict = field(default_factory=lambda: {
         "fast": "gemini-3.5-flash-lite", "main": "gemini-3.8-flash", "draft": "gemini-3.8-flash"})
+    # 무료 등급은 모델이 붐비면 503을 돌려준다. 그때 차례로 바꿔 부를 모델
+    gemini_fallback_models: list = field(default_factory=lambda: ["gemini-3.6-flash", "gemini-3.5-flash-lite"])
     ollama_models: dict = field(default_factory=lambda: {
         "fast": "qwen3:8b", "main": "qwen3:8b", "draft": "qwen3:8b"})
     usd_krw: float = 1400.0
@@ -80,6 +82,11 @@ class Settings:
     mail_poll_minutes: int = 5
     docdoc_base: str = "https://www.docdocdoc.co.kr"
     digest_times: tuple = ("08:00", "13:00", "18:00", "23:00")
+
+    # 원격 MCP: 기자가 자기 Claude·ChatGPT에 이 앱을 커넥터로 연결 (기자 계정으로 OAuth 로그인)
+    mcp_enabled: bool = True
+    # 커넥터가 로그인 후 돌아갈 수 있는 주소의 호스트 (쉼표로 구분)
+    mcp_redirect_hosts: tuple = ("claude.ai", "claude.com", "chatgpt.com", "chat.openai.com", "localhost", "127.0.0.1")
 
     @property
     def notify_enabled(self) -> bool:
@@ -134,6 +141,8 @@ def load_settings(env_file: Path | None = None) -> Settings:
         claude_models={k: os.getenv(f"CLAUDE_MODEL_{k.upper()}", v) for k, v in d.claude_models.items()},
         openai_models={k: os.getenv(f"OPENAI_MODEL_{k.upper()}", v) for k, v in d.openai_models.items()},
         gemini_models={k: os.getenv(f"GEMINI_MODEL_{k.upper()}", v) for k, v in d.gemini_models.items()},
+        gemini_fallback_models=[m.strip() for m in os.getenv(
+            "GEMINI_FALLBACK_MODELS", ",".join(d.gemini_fallback_models)).split(",") if m.strip()],
         ollama_models={k: os.getenv(f"OLLAMA_MODEL_{k.upper()}", v) for k, v in d.ollama_models.items()},
         usd_krw=float(os.getenv("USD_KRW", "1400")),
         default_monthly_limit_krw=int(os.getenv("MONTHLY_LIMIT_KRW", "30000")),
@@ -145,4 +154,7 @@ def load_settings(env_file: Path | None = None) -> Settings:
         mail_poll_minutes=max(1, int(os.getenv("MAIL_POLL_MINUTES", "5"))),
         docdoc_base=os.getenv("DOCDOC_BASE", "https://www.docdocdoc.co.kr").rstrip("/"),
         digest_times=_times(os.getenv("DIGEST_TIMES", "08:00,13:00,18:00,23:00")),
+        mcp_enabled=_bool("MCP_ENABLED", True),
+        mcp_redirect_hosts=tuple(h.strip().lower() for h in os.getenv("MCP_REDIRECT_HOSTS", "").split(",") if h.strip())
+        or d.mcp_redirect_hosts,
     )

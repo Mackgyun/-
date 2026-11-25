@@ -210,6 +210,37 @@ CREATE TABLE IF NOT EXISTS llm_usage (
   output_tokens INTEGER NOT NULL,
   cost_krw REAL NOT NULL
 );
+-- 원격 MCP 연결 (OAuth). 토큰은 SHA-256 해시로만 저장한다.
+CREATE TABLE IF NOT EXISTS oauth_clients (
+  client_id TEXT PRIMARY KEY,
+  info_json TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS oauth_requests (
+  id TEXT PRIMARY KEY,
+  client_id TEXT NOT NULL,
+  params_json TEXT NOT NULL,
+  expires_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS oauth_codes (
+  code_hash TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL,
+  data_json TEXT NOT NULL,
+  expires_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS oauth_tokens (
+  token_hash TEXT PRIMARY KEY,
+  kind TEXT NOT NULL,              -- access | refresh
+  user_id INTEGER NOT NULL,
+  client_id TEXT NOT NULL,
+  scopes TEXT NOT NULL,
+  resource TEXT,
+  expires_at INTEGER,
+  pair_hash TEXT,                  -- 같은 발급 묶음의 다른 토큰 (함께 폐기)
+  created_at TEXT NOT NULL,
+  last_used_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_oauth_tokens_user ON oauth_tokens(user_id);
 """
 
 # 기존 DB에 나중에 추가한 열 (없으면 ALTER TABLE)
